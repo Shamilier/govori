@@ -1,0 +1,163 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CallDirection {
+  INBOUND
+}
+
+enum CallStatus {
+  CREATED
+  RINGING
+  ANSWERED
+  GREETING
+  LISTENING
+  TRANSCRIBING
+  THINKING
+  SYNTHESIZING
+  SPEAKING
+  COMPLETED
+  FAILED
+}
+
+enum MessageRole {
+  SYSTEM
+  USER
+  ASSISTANT
+  TOOL
+}
+
+model Admin {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  passwordHash String          @map("password_hash")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+  auditLogs    AdminAuditLog[]
+
+  @@map("admins")
+}
+
+model Agent {
+  id                  String   @id @default(cuid())
+  name                String
+  systemPrompt        String   @map("system_prompt")
+  greetingText        String   @map("greeting_text")
+  fallbackText        String   @map("fallback_text")
+  goodbyeText         String   @map("goodbye_text")
+  language            String
+  isActive            Boolean  @default(true) @map("is_active")
+  interruptionEnabled Boolean  @default(true) @map("interruption_enabled")
+  silenceTimeoutMs    Int      @default(7000) @map("silence_timeout_ms")
+  maxCallDurationSec  Int      @default(300) @map("max_call_duration_sec")
+  maxTurns            Int      @default(20) @map("max_turns")
+  responseTemperature Decimal  @default(0.3) @db.Decimal(3, 2) @map("response_temperature")
+  responseMaxTokens   Int      @default(250) @map("response_max_tokens")
+  ttsProvider         String   @default("cartesia") @map("tts_provider")
+  ttsVoiceId          String   @map("tts_voice_id")
+  ttsSpeed            Decimal  @default(1.0) @db.Decimal(4, 2) @map("tts_speed")
+  ttsSampleRate       Int      @default(8000) @map("tts_sample_rate")
+  sttProvider         String   @default("mock") @map("stt_provider")
+  llmProvider         String   @default("openai") @map("llm_provider")
+  recordCalls         Boolean  @default(true) @map("record_calls")
+  ttsTestPhrase       String   @default("Это тест голоса агента") @map("tts_test_phrase")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  calls               Call[]
+
+  @@map("agents")
+}
+
+model IntegrationSettings {
+  id                String   @id @default(cuid())
+  telephonyProvider String   @default("voximplant") @map("telephony_provider")
+  phoneNumberE164   String?  @map("phone_number_e164")
+  voximplantConfig  Json     @default("{}") @map("voximplant_config_json")
+  cartesiaConfig    Json     @default("{}") @map("cartesia_config_json")
+  llmConfig         Json     @default("{}") @map("llm_config_json")
+  sttConfig         Json     @default("{}") @map("stt_config_json")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("integration_settings")
+}
+
+model Call {
+  id                 String        @id @default(cuid())
+  externalCallId     String        @unique @map("external_call_id")
+  agentId            String        @map("agent_id")
+  direction          CallDirection @default(INBOUND)
+  callerPhone        String?       @map("caller_phone")
+  calleePhone        String?       @map("callee_phone")
+  status             CallStatus    @default(RINGING)
+  startedAt          DateTime      @default(now()) @map("started_at")
+  answeredAt         DateTime?     @map("answered_at")
+  endedAt            DateTime?     @map("ended_at")
+  durationSec        Int?          @map("duration_sec")
+  recordingUrl       String?       @map("recording_url")
+  transcriptText     String?       @map("transcript_text")
+  outcomeJson        Json?         @map("outcome_json")
+  errorMessage       String?       @map("error_message")
+  systemPromptSnapshot String?     @map("system_prompt_snapshot")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  agent     Agent         @relation(fields: [agentId], references: [id])
+  messages  CallMessage[]
+  events    CallEvent[]
+
+  @@index([status])
+  @@index([callerPhone])
+  @@index([startedAt])
+  @@map("calls")
+}
+
+model CallMessage {
+  id         String      @id @default(cuid())
+  callId     String      @map("call_id")
+  role       MessageRole
+  text       String
+  sequenceNo Int         @map("sequence_no")
+  startedAt  DateTime?   @map("started_at")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  metaJson   Json?       @map("meta_json")
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@unique([callId, sequenceNo])
+  @@index([callId, sequenceNo])
+  @@map("call_messages")
+}
+
+model CallEvent {
+  id          String   @id @default(cuid())
+  callId       String   @map("call_id")
+  eventType    String   @map("event_type")
+  payloadJson  Json?    @map("payload_json")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId, createdAt])
+  @@map("call_events")
+}
+
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  adminId    String?  @map("admin_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  payloadJson Json?   @map("payload_json")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  admin Admin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@map("admin_audit_logs")
+}
