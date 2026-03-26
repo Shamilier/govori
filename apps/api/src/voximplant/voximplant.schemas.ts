@@ -30,7 +30,16 @@ export const voximplantLogSchema = z.object({
     .default({}),
 });
 
+export const voximplantSynthesizeSchema = z.object({
+  text: z.string().min(1).max(5000),
+  assistant_id: z.string().optional(),
+  voice_id: z.string().optional(),
+  speed: z.number().optional(),
+  language: z.string().optional(),
+});
+
 export type VoximplantExecuteFunctionInput = z.infer<
   typeof voximplantExecuteFunctionSchema
 >;
 export type VoximplantLogInput = z.infer<typeof voximplantLogSchema>;
+export type VoximplantSynthesizeInput = z.infer<typeof voximplantSynthesizeSchema>;

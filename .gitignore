@@ -11,3 +11,4 @@ apps/*/.next
 apps/*/node_modules
 apps/*/generated
 apps/api/prisma/dev.db
+.claude/

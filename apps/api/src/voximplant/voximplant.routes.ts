@@ -3,6 +3,7 @@ import { env } from "@/common/env.js";
 import {
   voximplantExecuteFunctionSchema,
   voximplantLogSchema,
+  voximplantSynthesizeSchema,
 } from "@/voximplant/voximplant.schemas.js";
 import type { VoximplantService } from "@/voximplant/voximplant.service.js";
 
@@ -73,5 +74,36 @@ export async function registerVoximplantRoutes(
 
     const result = await deps.voximplantService.ingestLog(parsed.data);
     return reply.send(result);
+  });
+
+  app.post("/api/voximplant/synthesize", async (request, reply) => {
+    const invalid = verifySecret(request, reply);
+    if (invalid) {
+      return invalid;
+    }
+
+    const parsed = voximplantSynthesizeSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ error: "INVALID_PAYLOAD", details: parsed.error.flatten() });
+    }
+
+    const result = await deps.voximplantService.synthesize(parsed.data);
+    return reply.send(result);
+  });
+
+  app.get("/api/voximplant/audio/:id", async (request, reply) => {
+    const params = request.params as { id: string };
+    const audio = await deps.voximplantService.getAudio(params.id);
+    if (!audio) {
+      return reply.code(404).send({ error: "AUDIO_NOT_FOUND" });
+    }
+
+    return reply
+      .header("Content-Type", "audio/wav")
+      .header("Content-Length", audio.length)
+      .header("Cache-Control", "no-store")
+      .send(audio);
   });
 }

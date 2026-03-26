@@ -33,6 +33,7 @@ const envSchema = z.object({
   LLM_MODEL: z.string().default("gpt-4.1-mini"),
   STT_PROVIDER: z.string().default("mock"),
   STT_API_KEY: z.string().optional(),
+  PUBLIC_API_BASE_URL: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

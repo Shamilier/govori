@@ -97,6 +97,8 @@ export async function buildApp(
     prisma,
     integrationsService,
     conversationService,
+    ttsProvider,
+    redis,
   );
   const orchestrator = new CallSessionOrchestrator(
     prisma,

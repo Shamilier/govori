@@ -1,9 +1,14 @@
+import crypto from "node:crypto";
 import type { MessageRole, Prisma, PrismaClient } from "@prisma/client";
 import type { ConversationService } from "@/calls/conversation.service.js";
 import type { IntegrationsService } from "@/integrations/integrations.service.js";
+import type { RedisService } from "@/redis/redis.service.js";
+import type { TtsProvider } from "@/providers/types.js";
+import { env } from "@/common/env.js";
 import type {
   VoximplantExecuteFunctionInput,
   VoximplantLogInput,
+  VoximplantSynthesizeInput,
 } from "@/voximplant/voximplant.schemas.js";
 
 function cleanPhone(value?: string): string | null {
@@ -13,12 +18,53 @@ function cleanPhone(value?: string): string | null {
   return value.replace(/^INBOUND:\s*/i, "").trim() || null;
 }
 
+const AUDIO_TTL_SEC = 120;
+const AUDIO_KEY_PREFIX = "vox:audio:";
+
 export class VoximplantService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly integrationsService: IntegrationsService,
     private readonly conversationService: ConversationService,
+    private readonly ttsProvider: TtsProvider,
+    private readonly redis: RedisService,
   ) {}
+
+  async synthesize(
+    input: VoximplantSynthesizeInput,
+  ): Promise<{ audio_url: string; duration_ms: number; audio_id: string }> {
+    const result = await this.ttsProvider.synthesize({
+      text: input.text,
+      voiceId: input.voice_id,
+      speed: input.speed,
+      language: input.language,
+    });
+
+    const audioId = crypto.randomUUID();
+    await this.redis.set(
+      `${AUDIO_KEY_PREFIX}${audioId}`,
+      result.audio.toString("base64"),
+      AUDIO_TTL_SEC,
+    );
+
+    const baseUrl =
+      env.PUBLIC_API_BASE_URL ||
+      `http://${env.API_HOST === "0.0.0.0" ? "localhost" : env.API_HOST}:${env.API_PORT}`;
+
+    return {
+      audio_url: `${baseUrl}/api/voximplant/audio/${audioId}`,
+      duration_ms: result.durationMs,
+      audio_id: audioId,
+    };
+  }
+
+  async getAudio(audioId: string): Promise<Buffer | null> {
+    const data = await this.redis.get(`${AUDIO_KEY_PREFIX}${audioId}`);
+    if (!data) {
+      return null;
+    }
+    return Buffer.from(data, "base64");
+  }
 
   async getAssistantConfig(
     _assistantId: string,
@@ -36,13 +82,34 @@ export class VoximplantService {
 
     const integrations = await this.integrationsService.getDecrypted();
 
+    const baseUrl =
+      env.PUBLIC_API_BASE_URL ||
+      `http://${env.API_HOST === "0.0.0.0" ? "localhost" : env.API_HOST}:${env.API_PORT}`;
+
     return {
       assistant_name: agent.name,
       api_key: integrations.llm.apiKey,
-      model: integrations.llm.model,
+      model: integrations.llm.model ?? "gpt-4o-realtime-preview-2024-12-17",
       prompt: agent.systemPrompt,
       hello: agent.greetingText,
       google_sheet_id: null,
+      tts_endpoint: `${baseUrl}/api/voximplant/synthesize`,
+      tts_audio_base_url: `${baseUrl}/api/voximplant/audio`,
+      voice_config: {
+        voice_id: agent.ttsVoiceId ?? integrations.cartesia.voiceId ?? env.CARTESIA_VOICE_ID ?? null,
+        speed: agent.ttsSpeed ?? 1,
+        language: agent.language ?? "ru",
+      },
+      goodbye_text: agent.goodbyeText ?? "До свидания!",
+      fallback_text: agent.fallbackText ?? "Извините, произошла ошибка. Попробуйте позвонить позже.",
+      agent_settings: {
+        interrupt_on_user_speech: agent.interruptionEnabled ?? true,
+        silence_timeout_ms: agent.silenceTimeoutMs ?? 10000,
+        max_call_duration_sec: agent.maxCallDurationSec ?? 300,
+        max_turns: agent.maxTurns ?? 20,
+        response_temperature: agent.responseTemperature ?? 0.3,
+        response_max_tokens: agent.responseMaxTokens ?? 250,
+      },
       functions: [
         {
           type: "function",
