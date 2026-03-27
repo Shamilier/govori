@@ -21,7 +21,8 @@ export class OpenAIConversationProvider implements ConversationModelProvider {
   constructor(private readonly config: OpenAIProviderConfig) {}
 
   async generate(request: ConversationModelRequest): Promise<string> {
-    const apiKey = (await this.config.getApiKey()) ?? env.LLM_API_KEY ?? null;
+    const apiKey =
+      request.apiKey ?? (await this.config.getApiKey()) ?? env.LLM_API_KEY ?? null;
     const model = await this.config.getModel();
 
     if (!apiKey) {
@@ -38,7 +39,7 @@ export class OpenAIConversationProvider implements ConversationModelProvider {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: request.model || model,
+        model: request.model ?? model,
         temperature: request.temperature,
         max_tokens: request.maxTokens,
         messages: request.messages.map((message) => ({

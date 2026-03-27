@@ -56,6 +56,54 @@ export async function registerIntegrationsRoutes(
     },
   );
 
+  app.get(
+    "/api/tenants/:tenantId/integrations",
+    {
+      preHandler: [app.authenticate],
+    },
+    async (request, reply) => {
+      const params = request.params as { tenantId: string };
+      const data = await deps.integrationsService.getMaskedForTenant(
+        params.tenantId,
+      );
+      return reply.send(data);
+    },
+  );
+
+  app.put(
+    "/api/tenants/:tenantId/integrations",
+    {
+      preHandler: [app.authenticate, app.verifyCsrf],
+    },
+    async (request, reply) => {
+      const parsed = integrationsUpdateSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply
+          .code(400)
+          .send({ error: "INVALID_PAYLOAD", details: parsed.error.flatten() });
+      }
+
+      if (!request.adminId) {
+        return reply.code(401).send({ error: "UNAUTHORIZED" });
+      }
+
+      const params = request.params as { tenantId: string };
+      try {
+        const data = await deps.integrationsService.updateTenant(
+          request.adminId,
+          params.tenantId,
+          parsed.data,
+        );
+        return reply.send(data);
+      } catch (error) {
+        if (error instanceof Error && error.message === "TENANT_NOT_FOUND") {
+          return reply.code(404).send({ error: "TENANT_NOT_FOUND" });
+        }
+        throw error;
+      }
+    },
+  );
+
   app.post(
     "/api/integrations/health",
     {

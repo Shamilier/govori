@@ -9,6 +9,7 @@ export const voximplantExecuteFunctionSchema = z.object({
       chat_id: z.string().optional(),
       assistant_id: z.string().optional(),
       caller_number: z.string().optional(),
+      destination_number: z.string().optional(),
     })
     .optional()
     .default({}),
@@ -19,6 +20,7 @@ export const voximplantLogSchema = z.object({
   chat_id: z.string().optional(),
   call_id: z.string(),
   caller_number: z.string().optional(),
+  destination_number: z.string().optional(),
   type: z.string().default("conversation"),
   data: z
     .object({

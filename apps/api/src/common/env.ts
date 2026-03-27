@@ -1,7 +1,23 @@
 import dotenv from "dotenv";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
-dotenv.config();
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+const envPaths = [
+  resolve(process.cwd(), ".env.local"),
+  resolve(process.cwd(), ".env"),
+  resolve(process.cwd(), "../.env.local"),
+  resolve(process.cwd(), "../.env"),
+  resolve(process.cwd(), "../../.env.local"),
+  resolve(process.cwd(), "../../.env"),
+  resolve(moduleDir, "../../../../.env.local"),
+  resolve(moduleDir, "../../../../.env"),
+];
+
+for (const path of envPaths) {
+  dotenv.config({ path, override: false });
+}
 
 const envSchema = z.object({
   NODE_ENV: z

@@ -6,6 +6,8 @@ import { apiFetch } from "@/lib/api";
 
 const links = [
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/clients", label: "Clients" },
+  { href: "/numbers", label: "Numbers" },
   { href: "/agent", label: "Agent" },
   { href: "/integrations", label: "Integrations" },
   { href: "/calls", label: "Calls" },

@@ -49,13 +49,16 @@ export class CartesiaTtsProvider implements TtsProvider {
     const started = Date.now();
     const sampleRate = input.sampleRate ?? 8000;
     const apiKey =
-      (await this.config.getApiKey()) ?? env.CARTESIA_API_KEY ?? null;
+      input.apiKey ??
+      (await this.config.getApiKey()) ??
+      env.CARTESIA_API_KEY ??
+      null;
     const voiceId =
       input.voiceId ??
       (await this.config.getVoiceId()) ??
       env.CARTESIA_VOICE_ID ??
       "default";
-    const modelId = await this.config.getModelId();
+    const modelId = input.modelId ?? (await this.config.getModelId());
 
     if (!apiKey) {
       const durationMs = Math.max(500, Math.min(2000, input.text.length * 35));

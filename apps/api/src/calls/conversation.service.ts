@@ -77,10 +77,32 @@ function extractCallerName(
 export class ConversationService {
   constructor(private readonly modelProvider: ConversationModelProvider) {}
 
+  private resolveModel(params: {
+    llmModel?: string | null;
+    agentLlmProvider: string;
+  }): string | undefined {
+    if (params.llmModel && params.llmModel.trim().length > 0) {
+      return params.llmModel.trim();
+    }
+
+    const providerValue = params.agentLlmProvider.trim();
+    if (
+      providerValue.startsWith("gpt-") ||
+      providerValue.includes("realtime") ||
+      providerValue.includes(":")
+    ) {
+      return providerValue;
+    }
+
+    return undefined;
+  }
+
   async generateTurn(params: {
     agent: Agent;
     history: Array<Pick<CallMessage, "role" | "text">>;
     userText: string;
+    llmApiKey?: string | null;
+    llmModel?: string | null;
   }): Promise<ConversationTurnResult> {
     const turnsCount =
       params.history.filter((message) => message.role === "USER").length + 1;
@@ -115,7 +137,11 @@ export class ConversationService {
     let assistantText = "";
     try {
       assistantText = await this.modelProvider.generate({
-        model: params.agent.llmProvider,
+        model: this.resolveModel({
+          llmModel: params.llmModel,
+          agentLlmProvider: params.agent.llmProvider,
+        }),
+        apiKey: params.llmApiKey,
         temperature: toNumber(params.agent.responseTemperature, 0.3),
         maxTokens: params.agent.responseMaxTokens,
         messages: modelMessages,

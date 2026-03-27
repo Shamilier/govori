@@ -10,6 +10,8 @@ export type TtsSynthesizeInput = {
   speed?: number;
   sampleRate?: number;
   language?: string;
+  apiKey?: string | null;
+  modelId?: string | null;
 };
 
 export type TtsSynthesizeOutput = {

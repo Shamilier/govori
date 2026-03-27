@@ -13,8 +13,28 @@ export class AgentService {
     private readonly conversationService: ConversationService,
   ) {}
 
+  private async getDefaultTenantId(): Promise<string> {
+    const tenant =
+      (await this.prisma.tenant.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: "asc" },
+      })) ??
+      (await this.prisma.tenant.create({
+        data: {
+          id: "tenant_default",
+          slug: "default",
+          name: "Default Tenant",
+          isActive: true,
+        },
+      }));
+
+    return tenant.id;
+  }
+
   private async getOrCreate(): Promise<Agent> {
+    const tenantId = await this.getDefaultTenantId();
     const existing = await this.prisma.agent.findFirst({
+      where: { tenantId },
       orderBy: { createdAt: "asc" },
     });
     if (existing) {
@@ -23,6 +43,7 @@ export class AgentService {
 
     return this.prisma.agent.create({
       data: {
+        tenantId,
         name: "Main Voice Agent",
         systemPrompt: "Ты голосовой AI-агент. Отвечай кратко и вежливо.",
         greetingText: "Здравствуйте! Чем могу помочь?",

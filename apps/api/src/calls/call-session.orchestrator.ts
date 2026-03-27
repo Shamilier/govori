@@ -7,19 +7,117 @@ import type {
   PrismaClient,
 } from "@prisma/client";
 import type { ConversationService } from "@/calls/conversation.service.js";
+import type {
+  DecryptedIntegrationSettings,
+  IntegrationsService,
+} from "@/integrations/integrations.service.js";
 import type { RedisService } from "@/redis/redis.service.js";
 import type { TelephonyProvider } from "@/providers/telephony.provider.js";
-import type { SpeechToTextProvider, TtsProvider } from "@/providers/types.js";
+import type {
+  InboundCallEvent,
+  SpeechToTextProvider,
+  TtsProvider,
+} from "@/providers/types.js";
+
+function normalizePhone(value?: string): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/[^\d+]/g, "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
 
 export class CallSessionOrchestrator {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly redis: RedisService,
+    private readonly integrationsService: IntegrationsService,
     private readonly telephonyProvider: TelephonyProvider,
     private readonly sttProvider: SpeechToTextProvider,
     private readonly ttsProvider: TtsProvider,
     private readonly conversationService: ConversationService,
   ) {}
+
+  private async getTenantIntegrations(
+    tenantId: string,
+  ): Promise<DecryptedIntegrationSettings> {
+    return this.integrationsService.getDecryptedForTenant(tenantId);
+  }
+
+  private async resolveTenantAndAgent(inbound: InboundCallEvent): Promise<{
+    tenantId: string;
+    phoneNumberId: string | null;
+    agent: Agent;
+    normalizedCallee: string | null;
+  }> {
+    const normalizedCallee = normalizePhone(inbound.calleePhone);
+    const normalizedCaller = normalizePhone(inbound.callerPhone);
+
+    const phoneNumber = normalizedCallee
+      ? await this.prisma.phoneNumber.findFirst({
+          where: { e164: normalizedCallee, isActive: true },
+        })
+      : null;
+
+    const tenantId =
+      phoneNumber?.tenantId ??
+      (
+        await this.prisma.tenant.upsert({
+          where: { slug: "default" },
+          update: { isActive: true },
+          create: {
+            id: "tenant_default",
+            slug: "default",
+            name: "Default Tenant",
+            isActive: true,
+          },
+        })
+      ).id;
+
+    let agent: Agent | null = null;
+    if (phoneNumber?.agentId) {
+      agent = await this.prisma.agent.findFirst({
+        where: {
+          id: phoneNumber.agentId,
+          tenantId,
+          isActive: true,
+        },
+      });
+    }
+
+    if (!agent) {
+      agent =
+        (await this.prisma.agent.findFirst({
+          where: { tenantId, isActive: true },
+          orderBy: { createdAt: "asc" },
+        })) ??
+        (await this.prisma.agent.findFirst({
+          where: { tenantId },
+          orderBy: { createdAt: "asc" },
+        }));
+    }
+
+    if (!agent && normalizedCaller) {
+      agent =
+        (await this.prisma.agent.findFirst({
+          where: { isActive: true },
+          orderBy: { createdAt: "asc" },
+        })) ??
+        (await this.prisma.agent.findFirst({ orderBy: { createdAt: "asc" } }));
+    }
+
+    if (!agent) {
+      throw new Error("No agent configured");
+    }
+
+    return {
+      tenantId,
+      phoneNumberId: phoneNumber?.id ?? null,
+      agent,
+      normalizedCallee,
+    };
+  }
 
   async handleInboundWebhook(
     payload: Record<string, unknown>,
@@ -42,25 +140,21 @@ export class CallSessionOrchestrator {
       };
     }
 
-    const agent =
-      (await this.prisma.agent.findFirst({
-        where: { isActive: true },
-        orderBy: { createdAt: "asc" },
-      })) ??
-      (await this.prisma.agent.findFirst({ orderBy: { createdAt: "asc" } }));
-
-    if (!agent) {
-      throw new Error("No agent configured");
-    }
+    const routing = await this.resolveTenantAndAgent(inbound);
+    const integrations = await this.getTenantIntegrations(routing.tenantId);
+    const callerPhone = normalizePhone(inbound.callerPhone) ?? inbound.callerPhone;
+    const calleePhone = routing.normalizedCallee ?? inbound.calleePhone;
 
     const call = await this.prisma.call.create({
       data: {
         externalCallId: inbound.externalCallId,
-        agentId: agent.id,
-        callerPhone: inbound.callerPhone,
-        calleePhone: inbound.calleePhone,
+        tenantId: routing.tenantId,
+        phoneNumberId: routing.phoneNumberId,
+        agentId: routing.agent.id,
+        callerPhone,
+        calleePhone,
         status: "RINGING",
-        systemPromptSnapshot: agent.systemPrompt,
+        systemPromptSnapshot: routing.agent.systemPrompt,
       },
     });
 
@@ -72,11 +166,13 @@ export class CallSessionOrchestrator {
 
       await this.setStatus(call.id, "GREETING");
       const greeting = await this.ttsProvider.synthesize({
-        text: agent.greetingText,
-        language: agent.language,
-        speed: Number(agent.ttsSpeed),
-        voiceId: agent.ttsVoiceId,
-        sampleRate: agent.ttsSampleRate,
+        text: routing.agent.greetingText,
+        language: routing.agent.language,
+        speed: Number(routing.agent.ttsSpeed),
+        voiceId: routing.agent.ttsVoiceId,
+        sampleRate: routing.agent.ttsSampleRate,
+        apiKey: integrations.cartesia.apiKey,
+        modelId: integrations.cartesia.modelId,
       });
 
       await this.telephonyProvider.playAudio(
@@ -84,12 +180,18 @@ export class CallSessionOrchestrator {
         greeting.audio,
         greeting.contentType,
       );
-      await this.addMessage(call.id, "ASSISTANT", agent.greetingText, {
+      await this.addMessage(call.id, "ASSISTANT", routing.agent.greetingText, {
         kind: "greeting",
       });
       await this.setStatus(call.id, "LISTENING");
     } catch (error) {
-      await this.failSafe(call.id, inbound.externalCallId, agent, error);
+      await this.failSafe(
+        call.id,
+        inbound.externalCallId,
+        routing.agent,
+        integrations,
+        error,
+      );
     }
 
     return { callId: call.id, externalCallId: inbound.externalCallId };
@@ -123,6 +225,7 @@ export class CallSessionOrchestrator {
     if (!call || call.status === "COMPLETED" || call.status === "FAILED") {
       return;
     }
+    const integrations = await this.getTenantIntegrations(call.tenantId);
 
     await this.addEvent(call.id, "webhook.media.received", payload);
     await this.setStatus(call.id, "TRANSCRIBING");
@@ -138,7 +241,7 @@ export class CallSessionOrchestrator {
 
     const userText = transcript.trim();
     if (!userText) {
-      await this.handleSilence(call, externalCallId);
+      await this.handleSilence(call, externalCallId, integrations);
       return;
     }
 
@@ -155,6 +258,8 @@ export class CallSessionOrchestrator {
       agent: call.agent,
       history,
       userText,
+      llmApiKey: integrations.llm.apiKey,
+      llmModel: integrations.llm.model,
     });
 
     const assistantText = turnResult.assistantText || call.agent.fallbackText;
@@ -172,6 +277,8 @@ export class CallSessionOrchestrator {
       speed: Number(call.agent.ttsSpeed),
       language: call.agent.language,
       sampleRate: call.agent.ttsSampleRate,
+      apiKey: integrations.cartesia.apiKey,
+      modelId: integrations.cartesia.modelId,
     });
 
     await this.setStatus(call.id, "SPEAKING");
@@ -244,6 +351,7 @@ export class CallSessionOrchestrator {
   private async handleSilence(
     call: Call & { agent: Agent },
     externalCallId: string,
+    integrations: DecryptedIntegrationSettings,
   ): Promise<void> {
     const silenceCount = await this.redis.incr(`call:silence:${call.id}`, 3600);
 
@@ -259,6 +367,8 @@ export class CallSessionOrchestrator {
         speed: Number(call.agent.ttsSpeed),
         language: call.agent.language,
         sampleRate: call.agent.ttsSampleRate,
+        apiKey: integrations.cartesia.apiKey,
+        modelId: integrations.cartesia.modelId,
       });
       await this.telephonyProvider.playAudio(
         externalCallId,
@@ -281,6 +391,8 @@ export class CallSessionOrchestrator {
       speed: Number(call.agent.ttsSpeed),
       language: call.agent.language,
       sampleRate: call.agent.ttsSampleRate,
+      apiKey: integrations.cartesia.apiKey,
+      modelId: integrations.cartesia.modelId,
     });
     await this.setStatus(call.id, "SPEAKING");
     await this.telephonyProvider.playAudio(
@@ -295,6 +407,7 @@ export class CallSessionOrchestrator {
     callId: string,
     externalCallId: string,
     agent: Agent,
+    integrations: DecryptedIntegrationSettings,
     error: unknown,
   ): Promise<void> {
     const message = error instanceof Error ? error.message : "unknown_error";
@@ -307,6 +420,8 @@ export class CallSessionOrchestrator {
         speed: Number(agent.ttsSpeed),
         language: agent.language,
         sampleRate: agent.ttsSampleRate,
+        apiKey: integrations.cartesia.apiKey,
+        modelId: integrations.cartesia.modelId,
       });
       await this.telephonyProvider.playAudio(
         externalCallId,

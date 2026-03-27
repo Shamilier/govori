@@ -22,6 +22,10 @@ import { registerAuthRoutes } from "@/auth/auth.routes.js";
 import { registerAgentRoutes } from "@/agent/agent.routes.js";
 import { registerIntegrationsRoutes } from "@/integrations/integrations.routes.js";
 import { registerCallsRoutes } from "@/calls/calls.routes.js";
+import { TenantsService } from "@/tenants/tenants.service.js";
+import { registerTenantsRoutes } from "@/tenants/tenants.routes.js";
+import { PhoneNumbersService } from "@/phone-numbers/phone-numbers.service.js";
+import { registerPhoneNumbersRoutes } from "@/phone-numbers/phone-numbers.routes.js";
 import { registerTelephonyWebhooks } from "@/webhooks/telephony.routes.js";
 import { registerHealthRoutes } from "@/health/health.routes.js";
 import { VoximplantService } from "@/voximplant/voximplant.service.js";
@@ -86,6 +90,8 @@ export async function buildApp(
 
   const conversationService = new ConversationService(llmProvider);
   const authService = new AuthService(prisma);
+  const tenantsService = new TenantsService(prisma, auditService);
+  const phoneNumbersService = new PhoneNumbersService(prisma, auditService);
   const agentService = new AgentService(
     prisma,
     auditService,
@@ -103,6 +109,7 @@ export async function buildApp(
   const orchestrator = new CallSessionOrchestrator(
     prisma,
     redis,
+    integrationsService,
     telephonyProvider,
     sttProvider,
     ttsProvider,
@@ -172,6 +179,8 @@ export async function buildApp(
 
   await registerHealthRoutes(app, { prisma, redis });
   await registerAuthRoutes(app, { authService, auditService });
+  await registerTenantsRoutes(app, { tenantsService });
+  await registerPhoneNumbersRoutes(app, { phoneNumbersService });
   await registerAgentRoutes(app, { agentService });
   await registerIntegrationsRoutes(app, {
     integrationsService,

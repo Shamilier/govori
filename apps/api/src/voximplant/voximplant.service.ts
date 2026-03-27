@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { MessageRole, Prisma, PrismaClient } from "@prisma/client";
+import type { Agent, MessageRole, Prisma, PrismaClient } from "@prisma/client";
 import type { ConversationService } from "@/calls/conversation.service.js";
 import type { IntegrationsService } from "@/integrations/integrations.service.js";
 import type { RedisService } from "@/redis/redis.service.js";
@@ -18,6 +18,15 @@ function cleanPhone(value?: string): string | null {
   return value.replace(/^INBOUND:\s*/i, "").trim() || null;
 }
 
+function normalizePhone(value?: string): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/[^\d+]/g, "").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 const AUDIO_TTL_SEC = 120;
 const AUDIO_KEY_PREFIX = "vox:audio:";
 
@@ -30,14 +39,111 @@ export class VoximplantService {
     private readonly redis: RedisService,
   ) {}
 
+  private async getDefaultTenantId(): Promise<string> {
+    const tenant = await this.prisma.tenant.upsert({
+      where: { slug: "default" },
+      update: { isActive: true },
+      create: {
+        id: "tenant_default",
+        slug: "default",
+        name: "Default Tenant",
+        isActive: true,
+      },
+    });
+
+    return tenant.id;
+  }
+
+  private async resolvePhoneNumber(params: {
+    assistantId?: string;
+    destinationNumber?: string;
+  }) {
+    const byAssistant = params.assistantId?.trim();
+    if (byAssistant && byAssistant !== "default") {
+      const phoneByAssistant = await this.prisma.phoneNumber.findFirst({
+        where: {
+          isActive: true,
+          OR: [{ id: byAssistant }, { e164: byAssistant }],
+        },
+      });
+      if (phoneByAssistant) {
+        return phoneByAssistant;
+      }
+    }
+
+    const normalizedDestination = normalizePhone(params.destinationNumber);
+    if (normalizedDestination) {
+      return this.prisma.phoneNumber.findFirst({
+        where: { e164: normalizedDestination, isActive: true },
+      });
+    }
+
+    return null;
+  }
+
+  private async resolveAgentForTenant(params: {
+    tenantId: string;
+    preferredAgentId?: string | null;
+  }): Promise<Agent> {
+    const preferredAgentId = params.preferredAgentId ?? null;
+    if (preferredAgentId) {
+      const preferred = await this.prisma.agent.findFirst({
+        where: {
+          id: preferredAgentId,
+          tenantId: params.tenantId,
+          isActive: true,
+        },
+      });
+      if (preferred) {
+        return preferred;
+      }
+    }
+
+    const tenantAgent =
+      (await this.prisma.agent.findFirst({
+        where: { tenantId: params.tenantId, isActive: true },
+        orderBy: { createdAt: "asc" },
+      })) ??
+      (await this.prisma.agent.findFirst({
+        where: { tenantId: params.tenantId },
+        orderBy: { createdAt: "asc" },
+      }));
+
+    if (tenantAgent) {
+      return tenantAgent;
+    }
+
+    const globalAgent =
+      (await this.prisma.agent.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: "asc" },
+      })) ??
+      (await this.prisma.agent.findFirst({ orderBy: { createdAt: "asc" } }));
+
+    if (!globalAgent) {
+      throw new Error("No agent configured");
+    }
+
+    return globalAgent;
+  }
+
   async synthesize(
     input: VoximplantSynthesizeInput,
   ): Promise<{ audio_url: string; duration_ms: number; audio_id: string }> {
+    const phoneNumber = await this.resolvePhoneNumber({
+      assistantId: input.assistant_id,
+    });
+    const tenantId = phoneNumber?.tenantId ?? (await this.getDefaultTenantId());
+    const integrations =
+      await this.integrationsService.getDecryptedForTenant(tenantId);
+
     const result = await this.ttsProvider.synthesize({
       text: input.text,
       voiceId: input.voice_id,
       speed: input.speed,
       language: input.language,
+      apiKey: integrations.cartesia.apiKey,
+      modelId: integrations.cartesia.modelId,
     });
 
     const audioId = crypto.randomUUID();
@@ -67,20 +173,17 @@ export class VoximplantService {
   }
 
   async getAssistantConfig(
-    _assistantId: string,
+    assistantId: string,
   ): Promise<Record<string, unknown>> {
-    const agent =
-      (await this.prisma.agent.findFirst({
-        where: { isActive: true },
-        orderBy: { createdAt: "asc" },
-      })) ??
-      (await this.prisma.agent.findFirst({ orderBy: { createdAt: "asc" } }));
+    const phoneNumber = await this.resolvePhoneNumber({ assistantId });
+    const tenantId = phoneNumber?.tenantId ?? (await this.getDefaultTenantId());
+    const agent = await this.resolveAgentForTenant({
+      tenantId,
+      preferredAgentId: phoneNumber?.agentId,
+    });
 
-    if (!agent) {
-      throw new Error("No agent configured");
-    }
-
-    const integrations = await this.integrationsService.getDecrypted();
+    const integrations =
+      await this.integrationsService.getDecryptedForTenant(tenantId);
 
     const baseUrl =
       env.PUBLIC_API_BASE_URL ||
@@ -88,8 +191,14 @@ export class VoximplantService {
 
     return {
       assistant_name: agent.name,
+      tenant_id: tenantId,
+      phone_number: phoneNumber?.e164 ?? null,
       api_key: integrations.llm.apiKey,
-      model: integrations.llm.model ?? "gpt-4o-realtime-preview-2024-12-17",
+      // LLM_MODEL (e.g. gpt-4.1-mini) is for Chat Completions API.
+      // Voximplant Realtime API needs a realtime-capable model.
+      model: "gpt-4o-realtime-preview-2024-12-17",
+      // Regular chat model for reference (used by test-prompt, outcome generation, etc.)
+      chat_model: integrations.llm.model,
       prompt: agent.systemPrompt,
       hello: agent.greetingText,
       google_sheet_id: null,
@@ -193,28 +302,34 @@ export class VoximplantService {
   async ingestLog(
     input: VoximplantLogInput,
   ): Promise<{ ok: true; callId: string }> {
-    const agent =
-      (await this.prisma.agent.findFirst({
-        where: { isActive: true },
-        orderBy: { createdAt: "asc" },
-      })) ??
-      (await this.prisma.agent.findFirst({ orderBy: { createdAt: "asc" } }));
-
-    if (!agent) {
-      throw new Error("No agent configured");
-    }
+    const phoneNumber = await this.resolvePhoneNumber({
+      assistantId: input.assistant_id,
+      destinationNumber: input.destination_number,
+    });
+    const tenantId = phoneNumber?.tenantId ?? (await this.getDefaultTenantId());
+    const agent = await this.resolveAgentForTenant({
+      tenantId,
+      preferredAgentId: phoneNumber?.agentId,
+    });
 
     const call = await this.prisma.call.upsert({
       where: { externalCallId: input.call_id },
       create: {
         externalCallId: input.call_id,
+        tenantId,
+        phoneNumberId: phoneNumber?.id ?? null,
         agentId: agent.id,
         callerPhone: cleanPhone(input.caller_number),
+        calleePhone: normalizePhone(input.destination_number),
         status: "ANSWERED",
         systemPromptSnapshot: agent.systemPrompt,
       },
       update: {
         callerPhone: cleanPhone(input.caller_number),
+        calleePhone: normalizePhone(input.destination_number),
+        tenantId,
+        phoneNumberId: phoneNumber?.id ?? null,
+        agentId: agent.id,
       },
     });
 

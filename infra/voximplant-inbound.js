@@ -1,5 +1,5 @@
 /**
- * GovorI — Voximplant INBOUND Script
+ * GovorI — Voximplant INBOUND Script v2.0
  *
  * Architecture:
  *   - OpenAI Realtime API for STT (speech-to-text) + LLM (text generation)
@@ -10,14 +10,13 @@
  *   1. Call comes in → load config from backend
  *   2. Connect to OpenAI Realtime in TEXT-ONLY output mode
  *   3. OpenAI transcribes user speech (STT) and generates text response (LLM)
- *   4. Script sends text to backend /synthesize → gets audio URL
- *   5. Script plays audio URL via call.startPlayback()
- *   6. Repeat until call ends
+ *   4. On ResponseOutputItemDone (type=message) → send text to backend /synthesize
+ *   5. Backend calls Cartesia → returns audio URL
+ *   6. Script plays audio via call.startPlayback()
+ *   7. Repeat until call ends
  *
- * Setup:
- *   - Replace BACKEND_BASE_URL with your GovorI server URL
- *   - Replace AGENT_ID with your agent ID from the GovorI database
- *   - Set WEBHOOK_SECRET if configured on the backend
+ * IMPORTANT: Voximplant SDK does NOT have ResponseTextDone event.
+ * We use ResponseOutputItemDone for BOTH text messages and function calls.
  */
 
 require(Modules.OpenAI);
@@ -25,32 +24,95 @@ require(Modules.OpenAI);
 // ============================================================
 // CONFIGURATION — change these for your deployment
 // ============================================================
-const BACKEND_BASE_URL = "https://your-server.com"; // GovorI backend URL
-const AGENT_ID = "default"; // Agent ID from GovorI DB (or "default" for first active agent)
-const WEBHOOK_SECRET = ""; // Set if VOXIMPLANT_WEBHOOK_SECRET is configured
+// Example for local dev with tunnel:
+// const BACKEND_BASE_URL = "https://<your-tunnel-domain>";
+const BACKEND_BASE_URL = "https://api.disciplaner.com";
+const WEBHOOK_SECRET = "";
+
+// Fallback assistant id for legacy mode when destination number is unavailable.
+const FALLBACK_ASSISTANT_ID = "default";
 
 // Derived URLs
-const CONFIG_URL = BACKEND_BASE_URL + "/api/voximplant/assistants/config/" + AGENT_ID;
 const TTS_URL = BACKEND_BASE_URL + "/api/voximplant/synthesize";
 const FUNCTIONS_URL = BACKEND_BASE_URL + "/api/voximplant/functions/execute";
 const LOG_URL = BACKEND_BASE_URL + "/api/voximplant/log";
 
+function normalizePhone(value) {
+    if (!value || typeof value !== "string") {
+        return null;
+    }
+
+    var cleaned = value
+        .replace(/^INBOUND:\s*/i, "")
+        .replace(/[^\d+]/g, "")
+        .trim();
+
+    return cleaned.length > 0 ? cleaned : null;
+}
+
+function readCallMethod(call, methodName) {
+    try {
+        if (call && typeof call[methodName] === "function") {
+            return call[methodName]();
+        }
+    } catch (error) {
+        Logger.write("⚠️ Failed to read call." + methodName + ": " + error);
+    }
+
+    return null;
+}
+
+function resolveDestinationNumber(event, call) {
+    var candidates = [
+        event && event.destination_number,
+        event && event.destinationNumber,
+        event && event.called_number,
+        event && event.calledNumber,
+        event && event.did,
+        event && event.number,
+        event && event.to,
+        readCallMethod(call, "calledid"),
+        readCallMethod(call, "destination"),
+        readCallMethod(call, "did"),
+        readCallMethod(call, "number"),
+        readCallMethod(call, "to"),
+    ];
+
+    for (var i = 0; i < candidates.length; i++) {
+        var normalized = normalizePhone(candidates[i]);
+        if (normalized) {
+            return normalized;
+        }
+    }
+
+    return null;
+}
+
 // ============================================================
 // MAIN HANDLER
 // ============================================================
-VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
+VoxEngine.addEventListener(AppEvents.CallAlerting, async (event) => {
+    const call = event.call;
     let realtimeClient = undefined;
     let isTerminating = false;
     const chatId = "vox_" + Math.random().toString(36).substring(2, 15);
     const callerNumber = call.callerid() || "unknown";
+    const destinationNumber = resolveDestinationNumber(event, call);
+    const assistantId = destinationNumber || FALLBACK_ASSISTANT_ID;
+    const configUrl =
+        BACKEND_BASE_URL +
+        "/api/voximplant/assistants/config/" +
+        encodeURIComponent(assistantId);
     const callId = call.id();
 
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    Logger.write("📞 INBOUND CALL — GovorI + Cartesia TTS");
+    Logger.write("📞 INBOUND CALL — GovorI v2.0 + Cartesia TTS");
     Logger.write("   Caller: " + callerNumber + ", Call ID: " + callId);
+    Logger.write("   Destination: " + (destinationNumber || "unknown"));
+    Logger.write("   Assistant ID: " + assistantId);
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    // Conversation state for logging
+    // Conversation state
     let lastUserMessage = "";
     let lastAssistantMessage = "";
     let lastFunctionResult = null;
@@ -72,12 +134,10 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
             try { realtimeClient.close(); } catch (e) { /* ignore */ }
         }
 
-        // Send final log
         if (lastUserMessage || lastAssistantMessage) {
             sendConversationLog();
         }
 
-        // Notify backend that call ended
         sendLogToBackend({
             type: "call_ended",
             data: {
@@ -110,19 +170,18 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
 
     async function sendLogToBackend(extra) {
         try {
-            const payload = {
-                assistant_id: AGENT_ID,
-                chat_id: chatId,
-                call_id: callId,
-                caller_number: callerNumber,
-                type: extra.type || "conversation",
-                data: extra.data || {}
-            };
-
             await Net.httpRequestAsync(LOG_URL, {
                 headers: buildHeaders(),
                 method: "POST",
-                postData: JSON.stringify(payload)
+                postData: JSON.stringify({
+                    assistant_id: assistantId,
+                    chat_id: chatId,
+                    call_id: callId,
+                    caller_number: callerNumber,
+                    destination_number: destinationNumber || undefined,
+                    type: extra.type || "conversation",
+                    data: extra.data || {}
+                })
             });
         } catch (error) {
             Logger.write("❌ Log error: " + error);
@@ -151,10 +210,6 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
         lastFunctionResult = null;
     }
 
-    /**
-     * Synthesize text via backend (Cartesia) and play in call.
-     * Returns a promise that resolves when audio starts playing.
-     */
     async function synthesizeAndPlay(text) {
         if (!text || text.trim().length === 0) return;
 
@@ -167,12 +222,12 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
                 method: "POST",
                 postData: JSON.stringify({
                     text: text,
-                    assistant_id: AGENT_ID
+                    assistant_id: assistantId
                 })
             });
 
             if (response.code !== 200) {
-                Logger.write("❌ TTS failed: HTTP " + response.code);
+                Logger.write("❌ TTS failed: HTTP " + response.code + " " + response.text);
                 return;
             }
 
@@ -188,9 +243,6 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
         }
     }
 
-    /**
-     * Terminate the call gracefully with an optional farewell message.
-     */
     async function terminateCall(reason, farewellText) {
         if (isTerminating) return;
 
@@ -204,7 +256,6 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
 
         if (farewellText && farewellText.trim().length > 0) {
             await synthesizeAndPlay(farewellText);
-            // Wait for playback to finish before hanging up
             setTimeout(() => {
                 if (lastUserMessage || lastAssistantMessage) {
                     sendConversationLog();
@@ -225,7 +276,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
     try {
         // 1. Load config from backend
         Logger.write("🔄 Loading config from backend...");
-        const configResponse = await Net.httpRequestAsync(CONFIG_URL, {
+        const configResponse = await Net.httpRequestAsync(configUrl, {
             headers: buildHeaders(),
             method: "GET"
         });
@@ -240,19 +291,19 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
         Logger.write("✅ Config loaded: " + config.assistant_name);
 
         // Notify backend that call started
-        await sendLogToBackend({
+        sendLogToBackend({
             type: "call_started",
             data: { agent_name: config.assistant_name }
         });
 
         // 2. Build function list for OpenAI
-        let openaiTools = [];
-        const functionNameToIdMap = {};
+        var openaiTools = [];
+        var functionNameToIdMap = {};
 
         if (config.functions && Array.isArray(config.functions)) {
-            openaiTools = config.functions.map((tool, index) => {
+            openaiTools = config.functions.map(function(tool, index) {
                 if (tool.type === "function" && tool.function) {
-                    const fId = (index + 1).toString();
+                    var fId = (index + 1).toString();
                     functionNameToIdMap[tool.function.name] = fId;
                     Logger.write("🔧 Function: " + tool.function.name + " → ID " + fId);
                     return {
@@ -267,26 +318,26 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
         }
 
         // 3. Connect to OpenAI Realtime API
-        Logger.write("🔌 Connecting to OpenAI Realtime API (text mode)...");
+        Logger.write("🔌 Connecting to OpenAI Realtime API (text output mode)...");
         realtimeClient = await OpenAI.createRealtimeAPIClient({
             apiKey: config.api_key,
             model: config.model,
             type: OpenAI.RealtimeAPIClientType.REALTIME,
-            onWebSocketClose: function () {
+            onWebSocketClose: function() {
                 Logger.write("🔌 OpenAI WebSocket closed");
                 if (!isTerminating) {
-                    VoxEngine.terminate();
+                    onCallEnd();
                 }
             }
         });
 
-        Logger.write("✅ OpenAI connected");
+        Logger.write("✅ OpenAI connected, model: " + config.model);
 
-        // 4. Configure session — TEXT-ONLY output (no OpenAI TTS)
-        //    STT is still handled by OpenAI via input audio transcription
-        const sessionUpdate = {
+        // 4. Configure session — TEXT-ONLY output
+        realtimeClient.sessionUpdate({
             session: {
-                modalities: ["text"],  // KEY: text only output, no audio from OpenAI
+                type: "realtime",
+                modalities: ["text"],
                 instructions: config.prompt,
                 input_audio_transcription: {
                     model: "gpt-4o-transcribe",
@@ -295,29 +346,27 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
                 tools: openaiTools,
                 tool_choice: "auto"
             }
-        };
+        });
+        Logger.write("✅ Session configured — type: realtime, modalities: [text]");
 
-        realtimeClient.sessionUpdate(sessionUpdate);
-        Logger.write("✅ Session configured — modalities: [text], STT: gpt-4o-transcribe");
-
-        // 5. Send audio FROM caller TO OpenAI (one-way: caller → OpenAI for STT)
+        // 5. Send caller audio to OpenAI for STT (one-way)
         realtimeClient.sendMediaTo(call);
-        Logger.write("🎙️ Caller audio → OpenAI STT (one-way)");
+        Logger.write("🎙️ Caller audio → OpenAI STT");
 
-        // 6. Play greeting via Cartesia TTS
+        // 6. Play greeting via Cartesia
         if (config.hello) {
             Logger.write("👋 Playing greeting via Cartesia...");
             await synthesizeAndPlay(config.hello);
         }
 
-        // Also tell OpenAI about the greeting so it has context
+        // Tell OpenAI about the greeting so it has conversation context
         if (config.hello) {
             realtimeClient.conversationItemCreate({
                 item: {
                     type: "message",
                     role: "assistant",
                     content: [{
-                        type: "text",
+                        type: "output_text",
                         text: config.hello
                     }]
                 }
@@ -331,9 +380,9 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
         // 🎤 USER TRANSCRIPTION (OpenAI STT)
         realtimeClient.addEventListener(
             OpenAI.RealtimeAPIEvents.ConversationItemInputAudioTranscriptionCompleted,
-            (event) => {
+            function(event) {
                 try {
-                    const transcript = event.data?.payload?.transcript;
+                    var transcript = event.data && event.data.payload && event.data.payload.transcript;
                     if (!transcript) return;
 
                     Logger.write("👤 User: \"" + transcript + "\"");
@@ -343,131 +392,138 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
                 }
             }
         );
-        Logger.write("✅ User transcription handler registered");
+        Logger.write("✅ Handler: User transcription");
 
-        // 🤖 ASSISTANT TEXT RESPONSE (OpenAI LLM — text mode)
-        realtimeClient.addEventListener(
-            OpenAI.RealtimeAPIEvents.ResponseTextDone,
-            async (event) => {
-                try {
-                    const text = event.data?.payload?.text;
-                    if (!text) return;
-
-                    Logger.write("🤖 Assistant: \"" + text.substring(0, 100) + "\"");
-                    lastAssistantMessage = text;
-
-                    // Synthesize via Cartesia and play
-                    await synthesizeAndPlay(text);
-
-                    // Log the conversation pair
-                    if (lastUserMessage && lastAssistantMessage) {
-                        await sendConversationLog();
-                    }
-                } catch (error) {
-                    Logger.write("❌ Response handler error: " + error);
-                }
-            }
-        );
-        Logger.write("✅ Text response handler registered (Cartesia TTS)");
-
-        // 🔧 FUNCTION CALLS
+        // 🤖 ASSISTANT TEXT RESPONSE + 🔧 FUNCTION CALLS
+        // Both handled via ResponseOutputItemDone since Voximplant SDK
+        // does NOT have ResponseTextDone event
         realtimeClient.addEventListener(
             OpenAI.RealtimeAPIEvents.ResponseOutputItemDone,
-            async (event) => {
+            async function(event) {
                 try {
-                    const item = event.data?.payload?.item;
-                    if (!item || item.type !== "function_call") return;
+                    var payload = event.data && event.data.payload;
+                    var item = payload && payload.item;
+                    if (!item) return;
 
-                    const functionName = item.name;
-                    const argumentsStr = item.arguments;
-                    const functionCallId = item.call_id;
-
-                    if (!functionName || !argumentsStr) return;
-
-                    Logger.write("🔧 Function: " + functionName + " — " + argumentsStr);
-
-                    const args = JSON.parse(argumentsStr);
-
-                    // HANGUP — handle locally
-                    if (functionName === "hangup_call") {
-                        // Send function result back to OpenAI
-                        realtimeClient.conversationItemCreate({
-                            item: {
-                                type: "function_call_output",
-                                call_id: functionCallId,
-                                output: JSON.stringify({ status: "terminating" })
+                    // ---- TEXT MESSAGE (assistant response) ----
+                    if (item.type === "message" && item.role === "assistant") {
+                        var textContent = "";
+                        if (item.content && Array.isArray(item.content)) {
+                            for (var i = 0; i < item.content.length; i++) {
+                                if (item.content[i].type === "text" && item.content[i].text) {
+                                    textContent += item.content[i].text;
+                                }
                             }
-                        });
+                        }
 
-                        await terminateCall(
-                            args.reason || "agent_decision",
-                            args.farewell_message || config.goodbye_text || ""
-                        );
+                        if (!textContent) return;
+
+                        Logger.write("🤖 Assistant: \"" + textContent.substring(0, 100) + "\"");
+                        lastAssistantMessage = textContent;
+
+                        // Synthesize via Cartesia and play
+                        await synthesizeAndPlay(textContent);
+
+                        // Log conversation pair
+                        if (lastUserMessage && lastAssistantMessage) {
+                            await sendConversationLog();
+                        }
                         return;
                     }
 
-                    // ALL OTHER FUNCTIONS — send to backend
-                    const fId = functionNameToIdMap[functionName];
-                    if (!fId) {
-                        Logger.write("❌ Unknown function: " + functionName);
+                    // ---- FUNCTION CALL ----
+                    if (item.type === "function_call") {
+                        var functionName = item.name;
+                        var argumentsStr = item.arguments;
+                        var functionCallId = item.call_id;
+
+                        if (!functionName || !argumentsStr) return;
+
+                        Logger.write("🔧 Function: " + functionName + " — " + argumentsStr);
+
+                        var args = JSON.parse(argumentsStr);
+
+                        // HANGUP — handle locally
+                        if (functionName === "hangup_call") {
+                            realtimeClient.conversationItemCreate({
+                                item: {
+                                    type: "function_call_output",
+                                    call_id: functionCallId,
+                                    output: JSON.stringify({ status: "terminating" })
+                                }
+                            });
+
+                            await terminateCall(
+                                args.reason || "agent_decision",
+                                args.farewell_message || config.goodbye_text || ""
+                            );
+                            return;
+                        }
+
+                        // ALL OTHER FUNCTIONS — send to backend
+                        var fId = functionNameToIdMap[functionName];
+                        if (!fId) {
+                            Logger.write("❌ Unknown function: " + functionName);
+                            realtimeClient.conversationItemCreate({
+                                item: {
+                                    type: "function_call_output",
+                                    call_id: functionCallId,
+                                    output: JSON.stringify({ error: "Unknown function: " + functionName })
+                                }
+                            });
+                            realtimeClient.responseCreate();
+                            return;
+                        }
+
+                        var funcResponse = await Net.httpRequestAsync(FUNCTIONS_URL, {
+                            headers: buildHeaders(),
+                            method: "POST",
+                            postData: JSON.stringify({
+                                function_id: fId,
+                                arguments: args,
+                                call_data: {
+                                    call_id: callId,
+                                    chat_id: chatId,
+                                    assistant_id: assistantId,
+                                    caller_number: callerNumber,
+                                    destination_number: destinationNumber || undefined
+                                }
+                            })
+                        });
+
+                        var funcResult;
+                        if (funcResponse.code === 200) {
+                            funcResult = JSON.parse(funcResponse.text);
+                            Logger.write("✅ Function result: " + JSON.stringify(funcResult).substring(0, 150));
+                        } else {
+                            funcResult = { error: "Function failed: HTTP " + funcResponse.code };
+                            Logger.write("❌ Function failed: HTTP " + funcResponse.code);
+                        }
+
+                        lastFunctionResult = funcResult;
+
                         realtimeClient.conversationItemCreate({
                             item: {
                                 type: "function_call_output",
                                 call_id: functionCallId,
-                                output: JSON.stringify({ error: "Unknown function: " + functionName })
+                                output: JSON.stringify(funcResult)
                             }
                         });
                         realtimeClient.responseCreate();
-                        return;
                     }
-
-                    const funcResponse = await Net.httpRequestAsync(FUNCTIONS_URL, {
-                        headers: buildHeaders(),
-                        method: "POST",
-                        postData: JSON.stringify({
-                            function_id: fId,
-                            arguments: args,
-                            call_data: {
-                                call_id: callId,
-                                chat_id: chatId,
-                                assistant_id: AGENT_ID,
-                                caller_number: callerNumber
-                            }
-                        })
-                    });
-
-                    let funcResult;
-                    if (funcResponse.code === 200) {
-                        funcResult = JSON.parse(funcResponse.text);
-                        Logger.write("✅ Function result: " + JSON.stringify(funcResult).substring(0, 150));
-                    } else {
-                        funcResult = { error: "Function failed: HTTP " + funcResponse.code };
-                        Logger.write("❌ Function failed: HTTP " + funcResponse.code);
-                    }
-
-                    lastFunctionResult = funcResult;
-
-                    // Return result to OpenAI so it can continue the conversation
-                    realtimeClient.conversationItemCreate({
-                        item: {
-                            type: "function_call_output",
-                            call_id: functionCallId,
-                            output: JSON.stringify(funcResult)
-                        }
-                    });
-                    realtimeClient.responseCreate();
 
                 } catch (error) {
-                    Logger.write("❌ Function handler error: " + error);
+                    Logger.write("❌ OutputItemDone handler error: " + error);
+                    if (error.stack) Logger.write("   Stack: " + error.stack);
                 }
             }
         );
-        Logger.write("✅ Function call handler registered");
+        Logger.write("✅ Handler: ResponseOutputItemDone (text + functions)");
 
         // 🔇 INTERRUPTION — user starts speaking while audio plays
         realtimeClient.addEventListener(
             OpenAI.RealtimeAPIEvents.InputAudioBufferSpeechStarted,
-            () => {
+            function() {
                 try {
                     Logger.write("🔇 Interruption detected");
                     if (isPlayingAudio) {
@@ -482,18 +538,10 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
                 }
             }
         );
-        Logger.write("✅ Interruption handler registered");
-
-        // ⚠️ ERROR HANDLING
-        realtimeClient.addEventListener(
-            OpenAI.RealtimeAPIEvents.ResponseError || "response.error",
-            (event) => {
-                Logger.write("⚠️ OpenAI error: " + JSON.stringify(event.data).substring(0, 300));
-            }
-        );
+        Logger.write("✅ Handler: Interruption");
 
         Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        Logger.write("🎉 READY — GovorI + OpenAI STT + Cartesia TTS");
+        Logger.write("🎉 READY — GovorI v2.0 + Cartesia TTS");
         Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     } catch (error) {

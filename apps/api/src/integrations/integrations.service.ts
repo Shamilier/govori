@@ -1,4 +1,9 @@
-import type { IntegrationSettings, Prisma, PrismaClient } from "@prisma/client";
+import type {
+  IntegrationSettings,
+  Prisma,
+  PrismaClient,
+  TenantIntegrationSettings,
+} from "@prisma/client";
 import { env } from "@/common/env.js";
 import { decryptSecret, encryptSecret } from "@/common/crypto.js";
 import { maskValue, SECRET_MASK_PLACEHOLDER } from "@/common/mask.js";
@@ -48,13 +53,24 @@ function nextSecret(
   input: string | undefined,
   previousEncrypted: string | null,
 ): string | null {
-  if (typeof input === "undefined" || input === SECRET_MASK_PLACEHOLDER) {
+  if (typeof input === "undefined") {
     return previousEncrypted;
   }
-  if (input.trim().length === 0) {
+
+  const value = input.trim();
+  if (value.length === 0) {
     return null;
   }
-  return encryptSecret(input.trim(), env.ENCRYPTION_KEY);
+
+  // UI sends masked placeholders for unchanged secrets.
+  if (value === SECRET_MASK_PLACEHOLDER) {
+    return previousEncrypted;
+  }
+  if (previousEncrypted && value.includes("*")) {
+    return previousEncrypted;
+  }
+
+  return encryptSecret(value, env.ENCRYPTION_KEY);
 }
 
 export class IntegrationsService {
@@ -181,6 +197,228 @@ export class IntegrationsService {
           null,
       },
     };
+  }
+
+  private async getPhoneNumberForTenant(tenantId: string): Promise<string | null> {
+    const phoneNumber = await this.prisma.phoneNumber.findFirst({
+      where: { tenantId, isActive: true },
+      orderBy: { createdAt: "asc" },
+    });
+
+    return phoneNumber?.e164 ?? null;
+  }
+
+  private toDecryptedWithFallback(params: {
+    id: string;
+    telephonyProvider: string;
+    phoneNumberE164: string | null;
+    voximplant: Record<string, unknown>;
+    cartesia: Record<string, unknown>;
+    llm: Record<string, unknown>;
+    stt: Record<string, unknown>;
+    fallback: DecryptedIntegrationSettings;
+  }): DecryptedIntegrationSettings {
+    return {
+      id: params.id,
+      telephonyProvider:
+        params.telephonyProvider || params.fallback.telephonyProvider,
+      phoneNumberE164: params.phoneNumberE164 ?? params.fallback.phoneNumberE164,
+      voximplant: {
+        applicationId:
+          readString(params.voximplant, "applicationId") ??
+          params.fallback.voximplant.applicationId,
+        accountId:
+          readString(params.voximplant, "accountId") ??
+          params.fallback.voximplant.accountId,
+        apiKey:
+          decryptNullable(readString(params.voximplant, "apiKeyEnc")) ??
+          params.fallback.voximplant.apiKey,
+        apiSecret:
+          decryptNullable(readString(params.voximplant, "apiSecretEnc")) ??
+          params.fallback.voximplant.apiSecret,
+      },
+      cartesia: {
+        apiKey:
+          decryptNullable(readString(params.cartesia, "apiKeyEnc")) ??
+          params.fallback.cartesia.apiKey,
+        voiceId:
+          readString(params.cartesia, "voiceId") ??
+          params.fallback.cartesia.voiceId,
+        modelId:
+          readString(params.cartesia, "modelId") ??
+          params.fallback.cartesia.modelId,
+      },
+      llm: {
+        apiKey:
+          decryptNullable(readString(params.llm, "apiKeyEnc")) ??
+          params.fallback.llm.apiKey,
+        model: readString(params.llm, "model") ?? params.fallback.llm.model,
+      },
+      stt: {
+        apiKey:
+          decryptNullable(readString(params.stt, "apiKeyEnc")) ??
+          params.fallback.stt.apiKey,
+      },
+    };
+  }
+
+  async getDecryptedForTenant(
+    tenantId?: string | null,
+  ): Promise<DecryptedIntegrationSettings> {
+    const global = await this.getDecrypted();
+
+    if (!tenantId) {
+      return global;
+    }
+
+    const tenantSettings = await this.prisma.tenantIntegrationSettings.findUnique({
+      where: { tenantId },
+    });
+    const tenantPhoneNumber = await this.getPhoneNumberForTenant(tenantId);
+
+    if (!tenantSettings) {
+      return {
+        ...global,
+        phoneNumberE164: tenantPhoneNumber ?? global.phoneNumberE164,
+      };
+    }
+
+    return this.toDecryptedWithFallback({
+      id: tenantSettings.id,
+      telephonyProvider: tenantSettings.telephonyProvider,
+      phoneNumberE164: tenantPhoneNumber ?? global.phoneNumberE164,
+      voximplant: jsonObject(tenantSettings.voximplantConfig),
+      cartesia: jsonObject(tenantSettings.cartesiaConfig),
+      llm: jsonObject(tenantSettings.llmConfig),
+      stt: jsonObject(tenantSettings.sttConfig),
+      fallback: global,
+    });
+  }
+
+  async getMaskedForTenant(tenantId: string): Promise<Record<string, unknown>> {
+    const tenantSettings = await this.prisma.tenantIntegrationSettings.findUnique({
+      where: { tenantId },
+    });
+    const decrypted = await this.getDecryptedForTenant(tenantId);
+
+    return {
+      id: decrypted.id,
+      telephonyProvider: decrypted.telephonyProvider,
+      phoneNumberE164: decrypted.phoneNumberE164,
+      voximplantApplicationId: decrypted.voximplant.applicationId,
+      voximplantAccountId: decrypted.voximplant.accountId,
+      voximplantApiKey: maskValue(decrypted.voximplant.apiKey),
+      voximplantApiSecret: maskValue(decrypted.voximplant.apiSecret),
+      cartesiaApiKey: maskValue(decrypted.cartesia.apiKey),
+      cartesiaVoiceId: decrypted.cartesia.voiceId,
+      cartesiaModelId: decrypted.cartesia.modelId,
+      llmApiKey: maskValue(decrypted.llm.apiKey),
+      llmModel: decrypted.llm.model,
+      sttApiKey: maskValue(decrypted.stt.apiKey),
+      updatedAt: tenantSettings?.updatedAt ?? null,
+      tenantId,
+    };
+  }
+
+  async updateTenant(
+    adminId: string,
+    tenantId: string,
+    input: IntegrationsUpdateInput,
+  ): Promise<Record<string, unknown>> {
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
+    if (!tenant) {
+      throw new Error("TENANT_NOT_FOUND");
+    }
+
+    const existing = await this.prisma.tenantIntegrationSettings.findUnique({
+      where: { tenantId },
+    });
+    const fallback = await this.getDecrypted();
+
+    const prevVox = jsonObject(existing?.voximplantConfig ?? {});
+    const prevCartesia = jsonObject(existing?.cartesiaConfig ?? {});
+    const prevLlm = jsonObject(existing?.llmConfig ?? {});
+    const prevStt = jsonObject(existing?.sttConfig ?? {});
+
+    const nextVox = {
+      applicationId:
+        input.voximplantApplicationId ??
+        readString(prevVox, "applicationId") ??
+        fallback.voximplant.applicationId,
+      accountId:
+        input.voximplantAccountId ??
+        readString(prevVox, "accountId") ??
+        fallback.voximplant.accountId,
+      apiKeyEnc: nextSecret(
+        input.voximplantApiKey,
+        readString(prevVox, "apiKeyEnc"),
+      ),
+      apiSecretEnc: nextSecret(
+        input.voximplantApiSecret,
+        readString(prevVox, "apiSecretEnc"),
+      ),
+    };
+
+    const nextCartesia = {
+      apiKeyEnc: nextSecret(
+        input.cartesiaApiKey,
+        readString(prevCartesia, "apiKeyEnc"),
+      ),
+      voiceId:
+        input.cartesiaVoiceId ??
+        readString(prevCartesia, "voiceId") ??
+        fallback.cartesia.voiceId,
+      modelId:
+        input.cartesiaModelId ??
+        readString(prevCartesia, "modelId") ??
+        fallback.cartesia.modelId,
+    };
+
+    const nextLlm = {
+      apiKeyEnc: nextSecret(input.llmApiKey, readString(prevLlm, "apiKeyEnc")),
+      model: input.llmModel ?? readString(prevLlm, "model") ?? fallback.llm.model,
+    };
+
+    const nextStt = {
+      apiKeyEnc: nextSecret(input.sttApiKey, readString(prevStt, "apiKeyEnc")),
+    };
+
+    await this.prisma.tenantIntegrationSettings.upsert({
+      where: { tenantId },
+      create: {
+        tenantId,
+        telephonyProvider: input.telephonyProvider || fallback.telephonyProvider,
+        voximplantConfig: nextVox,
+        cartesiaConfig: nextCartesia,
+        llmConfig: nextLlm,
+        sttConfig: nextStt,
+      },
+      update: {
+        telephonyProvider: input.telephonyProvider || fallback.telephonyProvider,
+        voximplantConfig: nextVox,
+        cartesiaConfig: nextCartesia,
+        llmConfig: nextLlm,
+        sttConfig: nextStt,
+      },
+    });
+
+    await this.auditService.log({
+      adminId,
+      action: "TENANT_INTEGRATIONS_UPDATED",
+      entityType: "tenant_integration_settings",
+      entityId: tenantId,
+      payload: {
+        changedSecrets: [
+          input.voximplantApiKey ? "voximplantApiKey" : null,
+          input.voximplantApiSecret ? "voximplantApiSecret" : null,
+          input.cartesiaApiKey ? "cartesiaApiKey" : null,
+          input.llmApiKey ? "llmApiKey" : null,
+          input.sttApiKey ? "sttApiKey" : null,
+        ].filter(Boolean),
+      },
+    });
+
+    return this.getMaskedForTenant(tenantId);
   }
 
   async update(

@@ -4,7 +4,8 @@ export type PromptMessage = {
 };
 
 export type ConversationModelRequest = {
-  model: string;
+  model?: string;
+  apiKey?: string | null;
   temperature: number;
   maxTokens: number;
   messages: PromptMessage[];
