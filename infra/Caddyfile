@@ -5,12 +5,8 @@ disciplaner.online {
         reverse_proxy tg-bot:8080
     }
 
-    handle {
-        reverse_proxy web:3000
+    handle /api/* {
+        reverse_proxy api:4000
     }
-}
 
-api.disciplaner.online {
-    encode gzip
-    reverse_proxy api:4000
-}
+    handle {

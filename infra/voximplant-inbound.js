@@ -24,8 +24,14 @@ require(Modules.OpenAI);
 // ============================================================
 // CONFIGURATION — change these for your deployment
 // ============================================================
+<<<<<<< HEAD
 const BACKEND_BASE_URL = "https://api.disciplaner.online";
 const AGENT_ID = "default";
+=======
+// Example for local dev with tunnel:
+// const BACKEND_BASE_URL = "https://<your-tunnel-domain>";
+const BACKEND_BASE_URL = "https://api.disciplaner.online";
+>>>>>>> 87256fb (цев)
 const WEBHOOK_SECRET = "";
 
 // Derived URLs
