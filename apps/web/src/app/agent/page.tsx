@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { AuthGuard } from "@/components/AuthGuard";
 import { NavBar } from "@/components/NavBar";
-import { API_URL, apiFetch, getCsrfToken } from "@/lib/api";
+import { API_URL, ApiError, apiFetch, getCsrfToken } from "@/lib/api";
 
 const empty = {
   name: "",
@@ -38,6 +38,36 @@ export default function AgentPage() {
   );
   const [promptOutput, setPromptOutput] = useState<string | null>(null);
 
+  const formatApiError = (error: unknown): string => {
+    if (!(error instanceof ApiError)) {
+      return "Ошибка запроса";
+    }
+
+    const payload = error.payload as
+      | {
+          error?: string;
+          details?: {
+            fieldErrors?: Record<string, string[]>;
+          };
+        }
+      | undefined;
+
+    const fieldErrors = payload?.details?.fieldErrors ?? {};
+    const details = Object.entries(fieldErrors)
+      .flatMap(([field, errors]) => (errors ?? []).map((msg) => `${field}: ${msg}`))
+      .join("; ");
+
+    if (details) {
+      return `Ошибка валидации: ${details}`;
+    }
+
+    if (typeof payload?.error === "string" && payload.error.length > 0) {
+      return `Ошибка: ${payload.error}`;
+    }
+
+    return `Ошибка: ${error.status}`;
+  };
+
   useEffect(() => {
     const load = async () => {
       const data = await apiFetch<typeof empty>("/api/agent");
@@ -49,46 +79,61 @@ export default function AgentPage() {
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    await apiFetch("/api/agent", {
-      method: "PUT",
-      body: form,
-    });
-    setMessage("Сохранено");
+    setMessage(null);
+    try {
+      await apiFetch("/api/agent", {
+        method: "PUT",
+        body: form,
+      });
+      setMessage("Сохранено");
+    } catch (error) {
+      setMessage(formatApiError(error));
+    }
   };
 
   const testTts = async () => {
-    const response = await fetch(`${API_URL}/api/agent/test-tts`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        "x-csrf-token": getCsrfToken() ?? "",
-      },
-      body: JSON.stringify({ text: form.ttsTestPhrase }),
-    });
+    setMessage(null);
+    try {
+      const response = await fetch(`${API_URL}/api/agent/test-tts`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": getCsrfToken() ?? "",
+        },
+        body: JSON.stringify({ text: form.ttsTestPhrase }),
+      });
 
-    if (!response.ok) {
+      if (!response.ok) {
+        setMessage("Ошибка теста TTS");
+        return;
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      setAudioUrl(url);
+
+      const audio = new Audio(url);
+      await audio.play();
+    } catch (_error) {
       setMessage("Ошибка теста TTS");
-      return;
     }
-
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    setAudioUrl(url);
-
-    const audio = new Audio(url);
-    await audio.play();
   };
 
   const testPrompt = async () => {
-    const result = await apiFetch<{ assistantText: string }>(
-      "/api/agent/test-prompt",
-      {
-        method: "POST",
-        body: { text: promptInput },
-      },
-    );
-    setPromptOutput(result.assistantText);
+    setMessage(null);
+    try {
+      const result = await apiFetch<{ assistantText: string }>(
+        "/api/agent/test-prompt",
+        {
+          method: "POST",
+          body: { text: promptInput },
+        },
+      );
+      setPromptOutput(result.assistantText);
+    } catch (error) {
+      setMessage(formatApiError(error));
+    }
   };
 
   return (
@@ -184,6 +229,8 @@ export default function AgentPage() {
             <input
               type="number"
               step="0.1"
+              min={0.5}
+              max={2}
               value={form.ttsSpeed}
               onChange={(event) =>
                 setForm({ ...form, ttsSpeed: Number(event.target.value) })
@@ -192,6 +239,8 @@ export default function AgentPage() {
             <label>Sample rate</label>
             <input
               type="number"
+              min={8000}
+              max={48000}
               value={form.ttsSampleRate}
               onChange={(event) =>
                 setForm({ ...form, ttsSampleRate: Number(event.target.value) })
@@ -223,6 +272,8 @@ export default function AgentPage() {
             <label>Silence timeout (ms)</label>
             <input
               type="number"
+              min={1000}
+              max={60000}
               value={form.silenceTimeoutMs}
               onChange={(event) =>
                 setForm({
@@ -234,6 +285,8 @@ export default function AgentPage() {
             <label>Max duration (sec)</label>
             <input
               type="number"
+              min={30}
+              max={7200}
               value={form.maxCallDurationSec}
               onChange={(event) =>
                 setForm({
@@ -245,6 +298,8 @@ export default function AgentPage() {
             <label>Max turns</label>
             <input
               type="number"
+              min={1}
+              max={100}
               value={form.maxTurns}
               onChange={(event) =>
                 setForm({ ...form, maxTurns: Number(event.target.value) })
@@ -254,6 +309,8 @@ export default function AgentPage() {
             <input
               type="number"
               step="0.1"
+              min={0}
+              max={2}
               value={form.responseTemperature}
               onChange={(event) =>
                 setForm({
@@ -265,6 +322,8 @@ export default function AgentPage() {
             <label>Response max tokens</label>
             <input
               type="number"
+              min={32}
+              max={2048}
               value={form.responseMaxTokens}
               onChange={(event) =>
                 setForm({
@@ -294,7 +353,15 @@ export default function AgentPage() {
                 <div className="card">{promptOutput}</div>
               </div>
             )}
-            {message && <p style={{ color: "#166534" }}>{message}</p>}
+            {message && (
+              <p
+                style={{
+                  color: message.startsWith("Сохранено") ? "#166534" : "#b91c1c",
+                }}
+              >
+                {message}
+              </p>
+            )}
           </section>
         </form>
       </main>
