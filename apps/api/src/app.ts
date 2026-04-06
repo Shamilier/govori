@@ -22,14 +22,12 @@ import { registerAuthRoutes } from "@/auth/auth.routes.js";
 import { registerAgentRoutes } from "@/agent/agent.routes.js";
 import { registerIntegrationsRoutes } from "@/integrations/integrations.routes.js";
 import { registerCallsRoutes } from "@/calls/calls.routes.js";
-import { TenantsService } from "@/tenants/tenants.service.js";
-import { registerTenantsRoutes } from "@/tenants/tenants.routes.js";
-import { PhoneNumbersService } from "@/phone-numbers/phone-numbers.service.js";
-import { registerPhoneNumbersRoutes } from "@/phone-numbers/phone-numbers.routes.js";
 import { registerTelephonyWebhooks } from "@/webhooks/telephony.routes.js";
 import { registerHealthRoutes } from "@/health/health.routes.js";
 import { VoximplantService } from "@/voximplant/voximplant.service.js";
 import { registerVoximplantRoutes } from "@/voximplant/voximplant.routes.js";
+import { TelegramAuthService } from "@/telegram-auth/telegram-auth.service.js";
+import { registerTelegramAuthRoutes } from "@/telegram-auth/telegram-auth.routes.js";
 import type { PrismaClient } from "@prisma/client";
 import type { ConversationModelProvider } from "@/providers/conversation-model.provider.js";
 import type { TelephonyProvider } from "@/providers/telephony.provider.js";
@@ -90,8 +88,11 @@ export async function buildApp(
 
   const conversationService = new ConversationService(llmProvider);
   const authService = new AuthService(prisma);
-  const tenantsService = new TenantsService(prisma, auditService);
-  const phoneNumbersService = new PhoneNumbersService(prisma, auditService);
+  const telegramAuthService = new TelegramAuthService(
+    prisma,
+    env.WEB_ORIGIN,
+    env.TELEGRAM_AUTH_TOKEN_TTL_MIN,
+  );
   const agentService = new AgentService(
     prisma,
     auditService,
@@ -109,7 +110,6 @@ export async function buildApp(
   const orchestrator = new CallSessionOrchestrator(
     prisma,
     redis,
-    integrationsService,
     telephonyProvider,
     sttProvider,
     ttsProvider,
@@ -179,8 +179,7 @@ export async function buildApp(
 
   await registerHealthRoutes(app, { prisma, redis });
   await registerAuthRoutes(app, { authService, auditService });
-  await registerTenantsRoutes(app, { tenantsService });
-  await registerPhoneNumbersRoutes(app, { phoneNumbersService });
+  await registerTelegramAuthRoutes(app, { telegramAuthService });
   await registerAgentRoutes(app, { agentService });
   await registerIntegrationsRoutes(app, {
     integrationsService,

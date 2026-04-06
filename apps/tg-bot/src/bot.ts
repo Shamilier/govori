@@ -1,0 +1,68 @@
+import { Bot, type Context } from "grammy";
+import type { ApiClient, TelegramAuthBinding } from "./api/client.js";
+import { registerAuthHandlers } from "./auth/handler.js";
+import { createAuthMiddleware } from "./auth/middleware.js";
+import { registerCampaignHandlers } from "./campaign/handler.js";
+import { registerMainMenuHandlers } from "./menu/main.js";
+import { createRedisSessionMiddleware, type RedisSessionStore } from "./session/redis.js";
+
+export type DialogState = "idle" | "awaiting_numbers";
+
+export type BotSession = {
+  selectedAgentId: string | null;
+  dialogState: DialogState;
+  tenantId: string | null;
+  telegramUserId: number | null;
+};
+
+export interface BotContext extends Context {
+  session: BotSession;
+  auth: TelegramAuthBinding | null;
+}
+
+type CreateBotDeps = {
+  token: string;
+  apiClient: ApiClient;
+  sessionStore: RedisSessionStore;
+  authLinkBaseUrl?: string;
+};
+
+export function createInitialSession(): BotSession {
+  return {
+    selectedAgentId: null,
+    dialogState: "idle",
+    tenantId: null,
+    telegramUserId: null,
+  };
+}
+
+export function createBot(deps: CreateBotDeps): Bot<BotContext> {
+  const bot = new Bot<BotContext>(deps.token);
+
+  bot.catch(({ error }) => {
+    console.error("Telegram bot update failed", error);
+  });
+
+  bot.use(createRedisSessionMiddleware(deps.sessionStore));
+  bot.use(createAuthMiddleware(deps.apiClient));
+
+  registerAuthHandlers(bot, {
+    apiClient: deps.apiClient,
+    authLinkBaseUrl: deps.authLinkBaseUrl,
+  });
+  registerMainMenuHandlers(bot);
+  registerCampaignHandlers(bot);
+
+  bot.command("help", async (ctx) => {
+    await ctx.reply(
+      [
+        "Доступные команды:",
+        "/start - авторизация через ссылку",
+        "/menu - главное меню",
+        "/campaign - ввод номеров кампании",
+      ].join("\n"),
+    );
+  });
+
+  return bot;
+}

@@ -1,6 +1,13 @@
 disciplaner.online {
     encode gzip
-    reverse_proxy web:3000
+
+    handle /telegram/webhook* {
+        reverse_proxy tg-bot:8080
+    }
+
+    handle {
+        reverse_proxy web:3000
+    }
 }
 
 api.disciplaner.online {

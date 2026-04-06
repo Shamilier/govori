@@ -28,6 +28,7 @@ const envSchema = z.object({
   WEB_ORIGIN: z.string().url().default("http://localhost:3000"),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1).default("redis://localhost:6379"),
+  TELEGRAM_AUTH_TOKEN_TTL_MIN: z.coerce.number().int().min(1).max(1440).default(15),
   JWT_SECRET: z.string().min(16),
   ENCRYPTION_KEY: z.string().min(16),
   ADMIN_EMAIL: z.string().email().default("admin@example.com"),

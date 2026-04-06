@@ -32,58 +32,67 @@ enum MessageRole {
   TOOL
 }
 
-enum TenantUserRole {
-  OWNER
-  ADMIN
-}
-
 model Admin {
   id           String          @id @default(cuid())
   email        String          @unique
   passwordHash String          @map("password_hash")
+  tenantId     String?         @map("tenant_id")
   createdAt    DateTime        @default(now()) @map("created_at")
   updatedAt    DateTime        @updatedAt @map("updated_at")
   auditLogs    AdminAuditLog[]
-  tenantUsers  TenantUser[]
+  tenant       Tenant?         @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  telegramBindings TelegramBinding[] @relation("TelegramBindingLinkedByAdmin")
+  telegramAuthTokens TelegramAuthToken[] @relation("TelegramAuthTokenConsumedByAdmin")
 
+  @@index([tenantId])
   @@map("admins")
 }
 
 model Tenant {
-  id                   String                    @id @default(cuid())
-  name                 String
-  slug                 String                    @unique
-  isActive             Boolean                   @default(true) @map("is_active")
-  createdAt            DateTime                  @default(now()) @map("created_at")
-  updatedAt            DateTime                  @updatedAt @map("updated_at")
-  users                TenantUser[]
-  agents               Agent[]
-  phoneNumbers         PhoneNumber[]
-  calls                Call[]
-  integrationSettings  TenantIntegrationSettings?
+  id               String            @id @default(cuid())
+  name             String            @unique
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  admins           Admin[]
+  telegramBindings TelegramBinding[]
 
   @@map("tenants")
 }
 
-model TenantUser {
-  id        String         @id @default(cuid())
-  tenantId  String         @map("tenant_id")
-  adminId   String         @map("admin_id")
-  role      TenantUserRole @default(OWNER)
-  createdAt DateTime       @default(now()) @map("created_at")
-  updatedAt DateTime       @updatedAt @map("updated_at")
+model TelegramBinding {
+  id              String   @id @default(cuid())
+  tenantId        String   @map("tenant_id")
+  telegramUserId  BigInt   @unique @map("telegram_user_id")
+  linkedByAdminId String?  @map("linked_by_admin_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  admin  Admin  @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  linkedByAdmin Admin? @relation("TelegramBindingLinkedByAdmin", fields: [linkedByAdminId], references: [id], onDelete: SetNull)
 
-  @@unique([tenantId, adminId])
-  @@index([adminId])
-  @@map("tenant_users")
+  @@index([tenantId])
+  @@map("telegram_bindings")
+}
+
+model TelegramAuthToken {
+  id                String   @id @default(cuid())
+  tokenHash         String   @unique @map("token_hash")
+  telegramUserId    BigInt   @map("telegram_user_id")
+  chatId            BigInt   @map("chat_id")
+  expiresAt         DateTime @map("expires_at")
+  usedAt            DateTime? @map("used_at")
+  consumedByAdminId String?  @map("consumed_by_admin_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  consumedByAdmin Admin? @relation("TelegramAuthTokenConsumedByAdmin", fields: [consumedByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([telegramUserId])
+  @@index([expiresAt])
+  @@map("telegram_auth_tokens")
 }
 
 model Agent {
   id                  String   @id @default(cuid())
-  tenantId            String   @map("tenant_id")
   name                String
   systemPrompt        String   @map("system_prompt")
   greetingText        String   @map("greeting_text")
@@ -107,11 +116,8 @@ model Agent {
   ttsTestPhrase       String   @default("Это тест голоса агента") @map("tts_test_phrase")
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
-  tenant              Tenant   @relation(fields: [tenantId], references: [id])
   calls               Call[]
-  phoneNumbers        PhoneNumber[]
 
-  @@index([tenantId, isActive])
   @@map("agents")
 }
 
@@ -129,47 +135,9 @@ model IntegrationSettings {
   @@map("integration_settings")
 }
 
-model TenantIntegrationSettings {
-  id                String   @id @default(cuid())
-  tenantId          String   @unique @map("tenant_id")
-  telephonyProvider String   @default("voximplant") @map("telephony_provider")
-  voximplantConfig  Json     @default("{}") @map("voximplant_config_json")
-  cartesiaConfig    Json     @default("{}") @map("cartesia_config_json")
-  llmConfig         Json     @default("{}") @map("llm_config_json")
-  sttConfig         Json     @default("{}") @map("stt_config_json")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@map("tenant_integration_settings")
-}
-
-model PhoneNumber {
-  id        String   @id @default(cuid())
-  tenantId  String   @map("tenant_id")
-  agentId   String?  @map("agent_id")
-  e164      String   @unique
-  label     String?
-  provider  String   @default("voximplant")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  agent  Agent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
-  calls  Call[]
-
-  @@index([tenantId, isActive])
-  @@index([agentId])
-  @@map("phone_numbers")
-}
-
 model Call {
   id                 String        @id @default(cuid())
   externalCallId     String        @unique @map("external_call_id")
-  tenantId           String        @map("tenant_id")
-  phoneNumberId      String?       @map("phone_number_id")
   agentId            String        @map("agent_id")
   direction          CallDirection @default(INBOUND)
   callerPhone        String?       @map("caller_phone")
@@ -187,14 +155,10 @@ model Call {
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
 
-  tenant      Tenant       @relation(fields: [tenantId], references: [id])
-  phoneNumber PhoneNumber? @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
-  agent       Agent        @relation(fields: [agentId], references: [id])
-  messages    CallMessage[]
-  events      CallEvent[]
+  agent     Agent         @relation(fields: [agentId], references: [id])
+  messages  CallMessage[]
+  events    CallEvent[]
 
-  @@index([tenantId, startedAt])
-  @@index([phoneNumberId])
   @@index([status])
   @@index([callerPhone])
   @@index([startedAt])

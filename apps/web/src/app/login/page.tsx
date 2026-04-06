@@ -22,7 +22,18 @@ export default function LoginPage() {
         body: { email, password },
         withCsrf: false,
       });
-      router.replace("/dashboard");
+
+      const requestedNextPath = new URLSearchParams(window.location.search)
+        .get("next")
+        ?.trim();
+      const safeNextPath =
+        requestedNextPath &&
+        requestedNextPath.startsWith("/") &&
+        !requestedNextPath.startsWith("//")
+          ? requestedNextPath
+          : "/dashboard";
+
+      router.replace(safeNextPath);
     } catch {
       setError("Не удалось войти. Проверьте email/password.");
     } finally {

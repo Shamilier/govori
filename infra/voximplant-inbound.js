@@ -24,92 +24,29 @@ require(Modules.OpenAI);
 // ============================================================
 // CONFIGURATION — change these for your deployment
 // ============================================================
-// Example for local dev with tunnel:
-// const BACKEND_BASE_URL = "https://<your-tunnel-domain>";
-const BACKEND_BASE_URL = "https://api.disciplaner.com";
+const BACKEND_BASE_URL = "https://api.disciplaner.online";
+const AGENT_ID = "default";
 const WEBHOOK_SECRET = "";
 
-// Fallback assistant id for legacy mode when destination number is unavailable.
-const FALLBACK_ASSISTANT_ID = "default";
-
 // Derived URLs
+const CONFIG_URL = BACKEND_BASE_URL + "/api/voximplant/assistants/config/" + AGENT_ID;
 const TTS_URL = BACKEND_BASE_URL + "/api/voximplant/synthesize";
 const FUNCTIONS_URL = BACKEND_BASE_URL + "/api/voximplant/functions/execute";
 const LOG_URL = BACKEND_BASE_URL + "/api/voximplant/log";
 
-function normalizePhone(value) {
-    if (!value || typeof value !== "string") {
-        return null;
-    }
-
-    var cleaned = value
-        .replace(/^INBOUND:\s*/i, "")
-        .replace(/[^\d+]/g, "")
-        .trim();
-
-    return cleaned.length > 0 ? cleaned : null;
-}
-
-function readCallMethod(call, methodName) {
-    try {
-        if (call && typeof call[methodName] === "function") {
-            return call[methodName]();
-        }
-    } catch (error) {
-        Logger.write("⚠️ Failed to read call." + methodName + ": " + error);
-    }
-
-    return null;
-}
-
-function resolveDestinationNumber(event, call) {
-    var candidates = [
-        event && event.destination_number,
-        event && event.destinationNumber,
-        event && event.called_number,
-        event && event.calledNumber,
-        event && event.did,
-        event && event.number,
-        event && event.to,
-        readCallMethod(call, "calledid"),
-        readCallMethod(call, "destination"),
-        readCallMethod(call, "did"),
-        readCallMethod(call, "number"),
-        readCallMethod(call, "to"),
-    ];
-
-    for (var i = 0; i < candidates.length; i++) {
-        var normalized = normalizePhone(candidates[i]);
-        if (normalized) {
-            return normalized;
-        }
-    }
-
-    return null;
-}
-
 // ============================================================
 // MAIN HANDLER
 // ============================================================
-VoxEngine.addEventListener(AppEvents.CallAlerting, async (event) => {
-    const call = event.call;
+VoxEngine.addEventListener(AppEvents.CallAlerting, async ({ call }) => {
     let realtimeClient = undefined;
     let isTerminating = false;
     const chatId = "vox_" + Math.random().toString(36).substring(2, 15);
     const callerNumber = call.callerid() || "unknown";
-    const destinationNumber = resolveDestinationNumber(event, call);
-    const assistantId = destinationNumber || FALLBACK_ASSISTANT_ID;
-    const configUrl =
-        BACKEND_BASE_URL +
-        "/api/voximplant/assistants/config/" +
-        encodeURIComponent(assistantId);
     const callId = call.id();
 
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     Logger.write("📞 INBOUND CALL — GovorI v2.0 + Cartesia TTS");
     Logger.write("   Caller: " + callerNumber + ", Call ID: " + callId);
-    Logger.write("   Destination: " + (destinationNumber || "unknown"));
-    Logger.write("   Assistant ID: " + assistantId);
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     // Conversation state
@@ -174,11 +111,10 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async (event) => {
                 headers: buildHeaders(),
                 method: "POST",
                 postData: JSON.stringify({
-                    assistant_id: assistantId,
+                    assistant_id: AGENT_ID,
                     chat_id: chatId,
                     call_id: callId,
                     caller_number: callerNumber,
-                    destination_number: destinationNumber || undefined,
                     type: extra.type || "conversation",
                     data: extra.data || {}
                 })
@@ -222,7 +158,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async (event) => {
                 method: "POST",
                 postData: JSON.stringify({
                     text: text,
-                    assistant_id: assistantId
+                    assistant_id: AGENT_ID
                 })
             });
 
@@ -276,7 +212,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async (event) => {
     try {
         // 1. Load config from backend
         Logger.write("🔄 Loading config from backend...");
-        const configResponse = await Net.httpRequestAsync(configUrl, {
+        const configResponse = await Net.httpRequestAsync(CONFIG_URL, {
             headers: buildHeaders(),
             method: "GET"
         });
@@ -484,9 +420,8 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async (event) => {
                                 call_data: {
                                     call_id: callId,
                                     chat_id: chatId,
-                                    assistant_id: assistantId,
-                                    caller_number: callerNumber,
-                                    destination_number: destinationNumber || undefined
+                                    assistant_id: AGENT_ID,
+                                    caller_number: callerNumber
                                 }
                             })
                         });
