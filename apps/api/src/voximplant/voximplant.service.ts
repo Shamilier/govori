@@ -27,6 +27,18 @@ function normalizePhone(value?: string): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+function clampNumber(
+  value: number,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, value));
+}
+
 const AUDIO_TTL_SEC = 120;
 const AUDIO_KEY_PREFIX = "vox:audio:";
 
@@ -189,6 +201,19 @@ export class VoximplantService {
       env.PUBLIC_API_BASE_URL ||
       `http://${env.API_HOST === "0.0.0.0" ? "localhost" : env.API_HOST}:${env.API_PORT}`;
 
+    const responseMaxTokens = clampNumber(
+      Number(agent.responseMaxTokens ?? 80),
+      32,
+      120,
+      80,
+    );
+    const responseTemperature = clampNumber(
+      Number(agent.responseTemperature ?? 0.2),
+      0,
+      1.2,
+      0.2,
+    );
+
     return {
       assistant_name: agent.name,
       tenant_id: tenantId,
@@ -214,10 +239,11 @@ export class VoximplantService {
       agent_settings: {
         interrupt_on_user_speech: agent.interruptionEnabled ?? true,
         silence_timeout_ms: agent.silenceTimeoutMs ?? 10000,
+        vad_silence_ms: 240,
         max_call_duration_sec: agent.maxCallDurationSec ?? 300,
         max_turns: agent.maxTurns ?? 20,
-        response_temperature: agent.responseTemperature ?? 0.3,
-        response_max_tokens: agent.responseMaxTokens ?? 250,
+        response_temperature: responseTemperature,
+        response_max_tokens: responseMaxTokens,
       },
       functions: [
         {

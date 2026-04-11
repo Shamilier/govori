@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const updateAgentSchema = z.object({
   name: z.string().min(1).max(100),
-  systemPrompt: z.string().min(10).max(8000),
+  systemPrompt: z.string().min(10).max(20000),
   greetingText: z.string().min(1).max(1000),
   fallbackText: z.string().min(1).max(1000),
   goodbyeText: z.string().min(1).max(1000),
