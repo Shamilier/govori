@@ -50,7 +50,7 @@ export class AgentService {
         fallbackText: "Извините, повторите, пожалуйста.",
         goodbyeText: "Спасибо за звонок. До свидания!",
         language: "ru-RU",
-        ttsVoiceId: "default",
+        ttsVoiceId: "Kore",
       },
     });
   }

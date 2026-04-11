@@ -11,19 +11,23 @@ import { AuthService } from "@/auth/auth.service.js";
 import { AuditService } from "@/audit/audit.service.js";
 import { IntegrationsService } from "@/integrations/integrations.service.js";
 import { VoximplantTelephonyProvider } from "@/providers/voximplant-telephony.provider.js";
-import { MockSpeechToTextProvider } from "@/providers/mock-stt.provider.js";
-import { CartesiaTtsProvider } from "@/providers/cartesia-tts.provider.js";
-import { OpenAIConversationProvider } from "@/providers/openai-conversation.provider.js";
+import { GeminiSpeechToTextProvider } from "@/providers/gemini-stt.provider.js";
+import { GeminiTtsProvider } from "@/providers/gemini-tts.provider.js";
+import { GeminiConversationProvider } from "@/providers/gemini-conversation.provider.js";
 import { ConversationService } from "@/calls/conversation.service.js";
 import { AgentService } from "@/agent/agent.service.js";
 import { CallsService } from "@/calls/calls.service.js";
 import { CallSessionOrchestrator } from "@/calls/call-session.orchestrator.js";
+import { TenantsService } from "@/tenants/tenants.service.js";
+import { PhoneNumbersService } from "@/phone-numbers/phone-numbers.service.js";
 import { registerAuthRoutes } from "@/auth/auth.routes.js";
 import { registerAgentRoutes } from "@/agent/agent.routes.js";
 import { registerIntegrationsRoutes } from "@/integrations/integrations.routes.js";
 import { registerCallsRoutes } from "@/calls/calls.routes.js";
 import { registerTelephonyWebhooks } from "@/webhooks/telephony.routes.js";
 import { registerHealthRoutes } from "@/health/health.routes.js";
+import { registerTenantsRoutes } from "@/tenants/tenants.routes.js";
+import { registerPhoneNumbersRoutes } from "@/phone-numbers/phone-numbers.routes.js";
 import { VoximplantService } from "@/voximplant/voximplant.service.js";
 import { registerVoximplantRoutes } from "@/voximplant/voximplant.routes.js";
 import { TelegramAuthService } from "@/telegram-auth/telegram-auth.service.js";
@@ -65,25 +69,32 @@ export async function buildApp(
 
   const telephonyProvider =
     options.telephonyProvider ?? new VoximplantTelephonyProvider();
-  const sttProvider = options.sttProvider ?? new MockSpeechToTextProvider();
+  const sttProvider =
+    options.sttProvider ??
+    new GeminiSpeechToTextProvider({
+      getApiKey: async () =>
+        (await integrationsService.getDecrypted()).gemini.apiKey,
+      getModel: async () =>
+        (await integrationsService.getDecrypted()).gemini.sttModel,
+    });
   const ttsProvider =
     options.ttsProvider ??
-    new CartesiaTtsProvider({
+    new GeminiTtsProvider({
       getApiKey: async () =>
-        (await integrationsService.getDecrypted()).cartesia.apiKey,
+        (await integrationsService.getDecrypted()).gemini.apiKey,
       getVoiceId: async () =>
-        (await integrationsService.getDecrypted()).cartesia.voiceId,
+        (await integrationsService.getDecrypted()).gemini.ttsVoice,
       getModelId: async () =>
-        (await integrationsService.getDecrypted()).cartesia.modelId,
+        (await integrationsService.getDecrypted()).gemini.ttsModel,
     });
 
   const llmProvider =
     options.llmProvider ??
-    new OpenAIConversationProvider({
+    new GeminiConversationProvider({
       getApiKey: async () =>
-        (await integrationsService.getDecrypted()).llm.apiKey,
+        (await integrationsService.getDecrypted()).gemini.apiKey,
       getModel: async () =>
-        (await integrationsService.getDecrypted()).llm.model,
+        (await integrationsService.getDecrypted()).gemini.llmModel,
     });
 
   const conversationService = new ConversationService(llmProvider);
@@ -100,6 +111,8 @@ export async function buildApp(
     conversationService,
   );
   const callsService = new CallsService(prisma);
+  const tenantsService = new TenantsService(prisma, auditService);
+  const phoneNumbersService = new PhoneNumbersService(prisma, auditService);
   const voximplantService = new VoximplantService(
     prisma,
     integrationsService,
@@ -110,6 +123,7 @@ export async function buildApp(
   const orchestrator = new CallSessionOrchestrator(
     prisma,
     redis,
+    integrationsService,
     telephonyProvider,
     sttProvider,
     ttsProvider,
@@ -180,6 +194,8 @@ export async function buildApp(
   await registerHealthRoutes(app, { prisma, redis });
   await registerAuthRoutes(app, { authService, auditService });
   await registerTelegramAuthRoutes(app, { telegramAuthService });
+  await registerTenantsRoutes(app, { tenantsService });
+  await registerPhoneNumbersRoutes(app, { phoneNumbersService });
   await registerAgentRoutes(app, { agentService });
   await registerIntegrationsRoutes(app, {
     integrationsService,

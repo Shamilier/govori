@@ -154,8 +154,8 @@ export class VoximplantService {
       voiceId: input.voice_id,
       speed: input.speed,
       language: input.language,
-      apiKey: integrations.cartesia.apiKey,
-      modelId: integrations.cartesia.modelId,
+      apiKey: integrations.gemini.apiKey,
+      modelId: integrations.gemini.ttsModel,
     });
 
     const audioId = crypto.randomUUID();
@@ -218,19 +218,16 @@ export class VoximplantService {
       assistant_name: agent.name,
       tenant_id: tenantId,
       phone_number: phoneNumber?.e164 ?? null,
-      api_key: integrations.llm.apiKey,
-      // LLM_MODEL (e.g. gpt-4.1-mini) is for Chat Completions API.
-      // Voximplant Realtime API needs a realtime-capable model.
-      model: "gpt-4o-realtime-preview-2024-12-17",
-      // Regular chat model for reference (used by test-prompt, outcome generation, etc.)
-      chat_model: integrations.llm.model,
+      api_key: integrations.gemini.apiKey,
+      model: integrations.gemini.llmModel,
+      chat_model: integrations.gemini.llmModel,
       prompt: agent.systemPrompt,
       hello: agent.greetingText,
       google_sheet_id: null,
       tts_endpoint: `${baseUrl}/api/voximplant/synthesize`,
       tts_audio_base_url: `${baseUrl}/api/voximplant/audio`,
       voice_config: {
-        voice_id: agent.ttsVoiceId ?? integrations.cartesia.voiceId ?? env.CARTESIA_VOICE_ID ?? null,
+        voice_id: agent.ttsVoiceId ?? integrations.gemini.ttsVoice ?? env.GEMINI_TTS_VOICE ?? null,
         speed: agent.ttsSpeed ?? 1,
         language: agent.language ?? "ru",
       },

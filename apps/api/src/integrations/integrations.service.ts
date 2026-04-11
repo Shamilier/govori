@@ -2,7 +2,6 @@ import type {
   IntegrationSettings,
   Prisma,
   PrismaClient,
-  TenantIntegrationSettings,
 } from "@prisma/client";
 import { env } from "@/common/env.js";
 import { decryptSecret, encryptSecret } from "@/common/crypto.js";
@@ -20,17 +19,26 @@ export type DecryptedIntegrationSettings = {
     apiKey: string | null;
     apiSecret: string | null;
   };
-  cartesia: {
+  gemini: {
     apiKey: string | null;
-    voiceId: string | null;
-    modelId: string;
+    llmModel: string;
+    ttsModel: string;
+    ttsVoice: string;
+    sttModel: string;
   };
+  // Aliases kept for compatibility with existing callers.
   llm: {
     apiKey: string | null;
     model: string;
   };
+  tts: {
+    apiKey: string | null;
+    modelId: string;
+    voiceId: string;
+  };
   stt: {
     apiKey: string | null;
+    modelId: string;
   };
 };
 
@@ -47,6 +55,15 @@ function readString(obj: Record<string, unknown>, key: string): string | null {
     return null;
   }
   return value;
+}
+
+function normalizeNonEmpty(value: string | undefined): string | null {
+  if (typeof value === "undefined") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
 function nextSecret(
@@ -73,11 +90,108 @@ function nextSecret(
   return encryptSecret(value, env.ENCRYPTION_KEY);
 }
 
+function pickSharedGeminiSecret(input: IntegrationsUpdateInput): string | undefined {
+  return (
+    input.geminiApiKey ??
+    input.llmApiKey ??
+    input.cartesiaApiKey ??
+    input.sttApiKey
+  );
+}
+
 export class IntegrationsService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly auditService: AuditService,
   ) {}
+
+  private withAliases(base: {
+    id: string;
+    telephonyProvider: string;
+    phoneNumberE164: string | null;
+    voximplant: {
+      applicationId: string | null;
+      accountId: string | null;
+      apiKey: string | null;
+      apiSecret: string | null;
+    };
+    gemini: {
+      apiKey: string | null;
+      llmModel: string;
+      ttsModel: string;
+      ttsVoice: string;
+      sttModel: string;
+    };
+  }): DecryptedIntegrationSettings {
+    return {
+      ...base,
+      llm: {
+        apiKey: base.gemini.apiKey,
+        model: base.gemini.llmModel,
+      },
+      tts: {
+        apiKey: base.gemini.apiKey,
+        modelId: base.gemini.ttsModel,
+        voiceId: base.gemini.ttsVoice,
+      },
+      stt: {
+        apiKey: base.gemini.apiKey,
+        modelId: base.gemini.sttModel,
+      },
+    };
+  }
+
+  private buildGeminiConfig(params: {
+    llm: Record<string, unknown>;
+    cartesia: Record<string, unknown>;
+    stt: Record<string, unknown>;
+    fallback?: DecryptedIntegrationSettings["gemini"];
+  }): DecryptedIntegrationSettings["gemini"] {
+    const fallback = params.fallback;
+
+    const apiKey =
+      decryptNullable(readString(params.llm, "apiKeyEnc")) ??
+      decryptNullable(readString(params.cartesia, "apiKeyEnc")) ??
+      decryptNullable(readString(params.stt, "apiKeyEnc")) ??
+      fallback?.apiKey ??
+      env.GEMINI_API_KEY ??
+      env.LLM_API_KEY ??
+      env.CARTESIA_API_KEY ??
+      env.STT_API_KEY ??
+      null;
+
+    const llmModel =
+      readString(params.llm, "model") ??
+      fallback?.llmModel ??
+      env.GEMINI_LLM_MODEL ??
+      env.LLM_MODEL;
+
+    const ttsModel =
+      readString(params.cartesia, "modelId") ??
+      fallback?.ttsModel ??
+      env.GEMINI_TTS_MODEL ??
+      env.CARTESIA_MODEL_ID;
+
+    const ttsVoice =
+      readString(params.cartesia, "voiceId") ??
+      fallback?.ttsVoice ??
+      env.GEMINI_TTS_VOICE ??
+      env.CARTESIA_VOICE_ID ??
+      "Kore";
+
+    const sttModel =
+      readString(params.stt, "model") ??
+      fallback?.sttModel ??
+      env.GEMINI_STT_MODEL;
+
+    return {
+      apiKey,
+      llmModel,
+      ttsModel,
+      ttsVoice,
+      sttModel,
+    };
+  }
 
   async getOrCreate(): Promise<IntegrationSettings> {
     const existing = await this.prisma.integrationSettings.findFirst();
@@ -95,52 +209,29 @@ export class IntegrationsService {
 
   async getMasked(): Promise<Record<string, unknown>> {
     const settings = await this.getOrCreate();
-    const voximplant = jsonObject(settings.voximplantConfig);
-    const cartesia = jsonObject(settings.cartesiaConfig);
-    const llm = jsonObject(settings.llmConfig);
-    const stt = jsonObject(settings.sttConfig);
+    const decrypted = await this.getDecrypted();
 
     return {
       id: settings.id,
-      telephonyProvider: settings.telephonyProvider,
-      phoneNumberE164: settings.phoneNumberE164,
-      voximplantApplicationId:
-        readString(voximplant, "applicationId") ??
-        env.VOXIMPLANT_APPLICATION_ID ??
-        null,
-      voximplantAccountId:
-        readString(voximplant, "accountId") ??
-        env.VOXIMPLANT_ACCOUNT_ID ??
-        null,
-      voximplantApiKey: maskValue(
-        decryptNullable(readString(voximplant, "apiKeyEnc")) ??
-          env.VOXIMPLANT_API_KEY ??
-          null,
-      ),
-      voximplantApiSecret: maskValue(
-        decryptNullable(readString(voximplant, "apiSecretEnc")) ??
-          env.VOXIMPLANT_API_SECRET ??
-          null,
-      ),
-      cartesiaApiKey: maskValue(
-        decryptNullable(readString(cartesia, "apiKeyEnc")) ??
-          env.CARTESIA_API_KEY ??
-          null,
-      ),
-      cartesiaVoiceId:
-        readString(cartesia, "voiceId") ?? env.CARTESIA_VOICE_ID ?? null,
-      cartesiaModelId: readString(cartesia, "modelId") ?? env.CARTESIA_MODEL_ID,
-      llmApiKey: maskValue(
-        decryptNullable(readString(llm, "apiKeyEnc")) ??
-          env.LLM_API_KEY ??
-          null,
-      ),
-      llmModel: readString(llm, "model") ?? env.LLM_MODEL,
-      sttApiKey: maskValue(
-        decryptNullable(readString(stt, "apiKeyEnc")) ??
-          env.STT_API_KEY ??
-          null,
-      ),
+      telephonyProvider: decrypted.telephonyProvider,
+      phoneNumberE164: decrypted.phoneNumberE164,
+      voximplantApplicationId: decrypted.voximplant.applicationId,
+      voximplantAccountId: decrypted.voximplant.accountId,
+      voximplantApiKey: maskValue(decrypted.voximplant.apiKey),
+      voximplantApiSecret: maskValue(decrypted.voximplant.apiSecret),
+      geminiApiKey: maskValue(decrypted.gemini.apiKey),
+      geminiLlmModel: decrypted.gemini.llmModel,
+      geminiTtsModel: decrypted.gemini.ttsModel,
+      geminiTtsVoice: decrypted.gemini.ttsVoice,
+      geminiSttModel: decrypted.gemini.sttModel,
+      // Legacy aliases for old UI payloads.
+      cartesiaApiKey: maskValue(decrypted.gemini.apiKey),
+      cartesiaVoiceId: decrypted.gemini.ttsVoice,
+      cartesiaModelId: decrypted.gemini.ttsModel,
+      llmApiKey: maskValue(decrypted.gemini.apiKey),
+      llmModel: decrypted.gemini.llmModel,
+      sttApiKey: maskValue(decrypted.gemini.apiKey),
+      sttModel: decrypted.gemini.sttModel,
       updatedAt: settings.updatedAt,
     };
   }
@@ -152,7 +243,13 @@ export class IntegrationsService {
     const llm = jsonObject(settings.llmConfig);
     const stt = jsonObject(settings.sttConfig);
 
-    return {
+    const gemini = this.buildGeminiConfig({
+      llm,
+      cartesia,
+      stt,
+    });
+
+    return this.withAliases({
       id: settings.id,
       telephonyProvider: settings.telephonyProvider,
       phoneNumberE164: settings.phoneNumberE164,
@@ -174,29 +271,8 @@ export class IntegrationsService {
           env.VOXIMPLANT_API_SECRET ??
           null,
       },
-      cartesia: {
-        apiKey:
-          decryptNullable(readString(cartesia, "apiKeyEnc")) ??
-          env.CARTESIA_API_KEY ??
-          null,
-        voiceId:
-          readString(cartesia, "voiceId") ?? env.CARTESIA_VOICE_ID ?? null,
-        modelId: readString(cartesia, "modelId") ?? env.CARTESIA_MODEL_ID,
-      },
-      llm: {
-        apiKey:
-          decryptNullable(readString(llm, "apiKeyEnc")) ??
-          env.LLM_API_KEY ??
-          null,
-        model: readString(llm, "model") ?? env.LLM_MODEL,
-      },
-      stt: {
-        apiKey:
-          decryptNullable(readString(stt, "apiKeyEnc")) ??
-          env.STT_API_KEY ??
-          null,
-      },
-    };
+      gemini,
+    });
   }
 
   private async getPhoneNumberForTenant(tenantId: string): Promise<string | null> {
@@ -218,7 +294,14 @@ export class IntegrationsService {
     stt: Record<string, unknown>;
     fallback: DecryptedIntegrationSettings;
   }): DecryptedIntegrationSettings {
-    return {
+    const gemini = this.buildGeminiConfig({
+      llm: params.llm,
+      cartesia: params.cartesia,
+      stt: params.stt,
+      fallback: params.fallback.gemini,
+    });
+
+    return this.withAliases({
       id: params.id,
       telephonyProvider:
         params.telephonyProvider || params.fallback.telephonyProvider,
@@ -237,29 +320,8 @@ export class IntegrationsService {
           decryptNullable(readString(params.voximplant, "apiSecretEnc")) ??
           params.fallback.voximplant.apiSecret,
       },
-      cartesia: {
-        apiKey:
-          decryptNullable(readString(params.cartesia, "apiKeyEnc")) ??
-          params.fallback.cartesia.apiKey,
-        voiceId:
-          readString(params.cartesia, "voiceId") ??
-          params.fallback.cartesia.voiceId,
-        modelId:
-          readString(params.cartesia, "modelId") ??
-          params.fallback.cartesia.modelId,
-      },
-      llm: {
-        apiKey:
-          decryptNullable(readString(params.llm, "apiKeyEnc")) ??
-          params.fallback.llm.apiKey,
-        model: readString(params.llm, "model") ?? params.fallback.llm.model,
-      },
-      stt: {
-        apiKey:
-          decryptNullable(readString(params.stt, "apiKeyEnc")) ??
-          params.fallback.stt.apiKey,
-      },
-    };
+      gemini,
+    });
   }
 
   async getDecryptedForTenant(
@@ -309,12 +371,18 @@ export class IntegrationsService {
       voximplantAccountId: decrypted.voximplant.accountId,
       voximplantApiKey: maskValue(decrypted.voximplant.apiKey),
       voximplantApiSecret: maskValue(decrypted.voximplant.apiSecret),
-      cartesiaApiKey: maskValue(decrypted.cartesia.apiKey),
-      cartesiaVoiceId: decrypted.cartesia.voiceId,
-      cartesiaModelId: decrypted.cartesia.modelId,
-      llmApiKey: maskValue(decrypted.llm.apiKey),
-      llmModel: decrypted.llm.model,
-      sttApiKey: maskValue(decrypted.stt.apiKey),
+      geminiApiKey: maskValue(decrypted.gemini.apiKey),
+      geminiLlmModel: decrypted.gemini.llmModel,
+      geminiTtsModel: decrypted.gemini.ttsModel,
+      geminiTtsVoice: decrypted.gemini.ttsVoice,
+      geminiSttModel: decrypted.gemini.sttModel,
+      cartesiaApiKey: maskValue(decrypted.gemini.apiKey),
+      cartesiaVoiceId: decrypted.gemini.ttsVoice,
+      cartesiaModelId: decrypted.gemini.ttsModel,
+      llmApiKey: maskValue(decrypted.gemini.apiKey),
+      llmModel: decrypted.gemini.llmModel,
+      sttApiKey: maskValue(decrypted.gemini.apiKey),
+      sttModel: decrypted.gemini.sttModel,
       updatedAt: tenantSettings?.updatedAt ?? null,
       tenantId,
     };
@@ -340,13 +408,15 @@ export class IntegrationsService {
     const prevLlm = jsonObject(existing?.llmConfig ?? {});
     const prevStt = jsonObject(existing?.sttConfig ?? {});
 
+    const sharedGeminiSecret = pickSharedGeminiSecret(input);
+
     const nextVox = {
       applicationId:
-        input.voximplantApplicationId ??
+        normalizeNonEmpty(input.voximplantApplicationId) ??
         readString(prevVox, "applicationId") ??
         fallback.voximplant.applicationId,
       accountId:
-        input.voximplantAccountId ??
+        normalizeNonEmpty(input.voximplantAccountId) ??
         readString(prevVox, "accountId") ??
         fallback.voximplant.accountId,
       apiKeyEnc: nextSecret(
@@ -359,28 +429,43 @@ export class IntegrationsService {
       ),
     };
 
+    const nextGeminiLlmModel =
+      normalizeNonEmpty(input.geminiLlmModel ?? input.llmModel ?? undefined) ??
+      readString(prevLlm, "model") ??
+      fallback.gemini.llmModel;
+
+    const nextGeminiTtsModel =
+      normalizeNonEmpty(input.geminiTtsModel ?? input.cartesiaModelId ?? undefined) ??
+      readString(prevCartesia, "modelId") ??
+      fallback.gemini.ttsModel;
+
+    const nextGeminiTtsVoice =
+      normalizeNonEmpty(input.geminiTtsVoice ?? input.cartesiaVoiceId ?? undefined) ??
+      readString(prevCartesia, "voiceId") ??
+      fallback.gemini.ttsVoice;
+
+    const nextGeminiSttModel =
+      normalizeNonEmpty(input.geminiSttModel) ??
+      readString(prevStt, "model") ??
+      fallback.gemini.sttModel;
+
     const nextCartesia = {
       apiKeyEnc: nextSecret(
-        input.cartesiaApiKey,
+        sharedGeminiSecret,
         readString(prevCartesia, "apiKeyEnc"),
       ),
-      voiceId:
-        input.cartesiaVoiceId ??
-        readString(prevCartesia, "voiceId") ??
-        fallback.cartesia.voiceId,
-      modelId:
-        input.cartesiaModelId ??
-        readString(prevCartesia, "modelId") ??
-        fallback.cartesia.modelId,
+      voiceId: nextGeminiTtsVoice,
+      modelId: nextGeminiTtsModel,
     };
 
     const nextLlm = {
-      apiKeyEnc: nextSecret(input.llmApiKey, readString(prevLlm, "apiKeyEnc")),
-      model: input.llmModel ?? readString(prevLlm, "model") ?? fallback.llm.model,
+      apiKeyEnc: nextSecret(sharedGeminiSecret, readString(prevLlm, "apiKeyEnc")),
+      model: nextGeminiLlmModel,
     };
 
     const nextStt = {
-      apiKeyEnc: nextSecret(input.sttApiKey, readString(prevStt, "apiKeyEnc")),
+      apiKeyEnc: nextSecret(sharedGeminiSecret, readString(prevStt, "apiKeyEnc")),
+      model: nextGeminiSttModel,
     };
 
     await this.prisma.tenantIntegrationSettings.upsert({
@@ -411,9 +496,7 @@ export class IntegrationsService {
         changedSecrets: [
           input.voximplantApiKey ? "voximplantApiKey" : null,
           input.voximplantApiSecret ? "voximplantApiSecret" : null,
-          input.cartesiaApiKey ? "cartesiaApiKey" : null,
-          input.llmApiKey ? "llmApiKey" : null,
-          input.sttApiKey ? "sttApiKey" : null,
+          sharedGeminiSecret ? "geminiApiKey" : null,
         ].filter(Boolean),
       },
     });
@@ -431,10 +514,15 @@ export class IntegrationsService {
     const prevLlm = jsonObject(existing.llmConfig);
     const prevStt = jsonObject(existing.sttConfig);
 
+    const sharedGeminiSecret = pickSharedGeminiSecret(input);
+
     const nextVox = {
       applicationId:
-        input.voximplantApplicationId ?? readString(prevVox, "applicationId"),
-      accountId: input.voximplantAccountId ?? readString(prevVox, "accountId"),
+        normalizeNonEmpty(input.voximplantApplicationId) ??
+        readString(prevVox, "applicationId"),
+      accountId:
+        normalizeNonEmpty(input.voximplantAccountId) ??
+        readString(prevVox, "accountId"),
       apiKeyEnc: nextSecret(
         input.voximplantApiKey,
         readString(prevVox, "apiKeyEnc"),
@@ -445,28 +533,47 @@ export class IntegrationsService {
       ),
     };
 
+    const nextGeminiLlmModel =
+      normalizeNonEmpty(input.geminiLlmModel ?? input.llmModel ?? undefined) ??
+      readString(prevLlm, "model") ??
+      env.GEMINI_LLM_MODEL ??
+      env.LLM_MODEL;
+
+    const nextGeminiTtsModel =
+      normalizeNonEmpty(input.geminiTtsModel ?? input.cartesiaModelId ?? undefined) ??
+      readString(prevCartesia, "modelId") ??
+      env.GEMINI_TTS_MODEL ??
+      env.CARTESIA_MODEL_ID;
+
+    const nextGeminiTtsVoice =
+      normalizeNonEmpty(input.geminiTtsVoice ?? input.cartesiaVoiceId ?? undefined) ??
+      readString(prevCartesia, "voiceId") ??
+      env.GEMINI_TTS_VOICE ??
+      env.CARTESIA_VOICE_ID ??
+      "Kore";
+
+    const nextGeminiSttModel =
+      normalizeNonEmpty(input.geminiSttModel) ??
+      readString(prevStt, "model") ??
+      env.GEMINI_STT_MODEL;
+
     const nextCartesia = {
       apiKeyEnc: nextSecret(
-        input.cartesiaApiKey,
+        sharedGeminiSecret,
         readString(prevCartesia, "apiKeyEnc"),
       ),
-      voiceId:
-        input.cartesiaVoiceId ??
-        readString(prevCartesia, "voiceId") ??
-        env.CARTESIA_VOICE_ID,
-      modelId:
-        input.cartesiaModelId ??
-        readString(prevCartesia, "modelId") ??
-        env.CARTESIA_MODEL_ID,
+      voiceId: nextGeminiTtsVoice,
+      modelId: nextGeminiTtsModel,
     };
 
     const nextLlm = {
-      apiKeyEnc: nextSecret(input.llmApiKey, readString(prevLlm, "apiKeyEnc")),
-      model: input.llmModel ?? readString(prevLlm, "model") ?? env.LLM_MODEL,
+      apiKeyEnc: nextSecret(sharedGeminiSecret, readString(prevLlm, "apiKeyEnc")),
+      model: nextGeminiLlmModel,
     };
 
     const nextStt = {
-      apiKeyEnc: nextSecret(input.sttApiKey, readString(prevStt, "apiKeyEnc")),
+      apiKeyEnc: nextSecret(sharedGeminiSecret, readString(prevStt, "apiKeyEnc")),
+      model: nextGeminiSttModel,
     };
 
     await this.prisma.integrationSettings.update({
@@ -490,9 +597,7 @@ export class IntegrationsService {
         changedSecrets: [
           input.voximplantApiKey ? "voximplantApiKey" : null,
           input.voximplantApiSecret ? "voximplantApiSecret" : null,
-          input.cartesiaApiKey ? "cartesiaApiKey" : null,
-          input.llmApiKey ? "llmApiKey" : null,
-          input.sttApiKey ? "sttApiKey" : null,
+          sharedGeminiSecret ? "geminiApiKey" : null,
         ].filter(Boolean),
       },
     });

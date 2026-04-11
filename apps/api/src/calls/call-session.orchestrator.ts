@@ -171,8 +171,8 @@ export class CallSessionOrchestrator {
         speed: Number(routing.agent.ttsSpeed),
         voiceId: routing.agent.ttsVoiceId,
         sampleRate: routing.agent.ttsSampleRate,
-        apiKey: integrations.cartesia.apiKey,
-        modelId: integrations.cartesia.modelId,
+        apiKey: integrations.gemini.apiKey,
+        modelId: integrations.gemini.ttsModel,
       });
 
       await this.telephonyProvider.playAudio(
@@ -237,6 +237,8 @@ export class CallSessionOrchestrator {
           ? payload.audio_base64
           : undefined,
       language: call.agent.language,
+      apiKey: integrations.gemini.apiKey,
+      modelId: integrations.gemini.sttModel,
     });
 
     const userText = transcript.trim();
@@ -258,8 +260,8 @@ export class CallSessionOrchestrator {
       agent: call.agent,
       history,
       userText,
-      llmApiKey: integrations.llm.apiKey,
-      llmModel: integrations.llm.model,
+      llmApiKey: integrations.gemini.apiKey,
+      llmModel: integrations.gemini.llmModel,
     });
 
     const assistantText = turnResult.assistantText || call.agent.fallbackText;
@@ -277,8 +279,8 @@ export class CallSessionOrchestrator {
       speed: Number(call.agent.ttsSpeed),
       language: call.agent.language,
       sampleRate: call.agent.ttsSampleRate,
-      apiKey: integrations.cartesia.apiKey,
-      modelId: integrations.cartesia.modelId,
+      apiKey: integrations.gemini.apiKey,
+      modelId: integrations.gemini.ttsModel,
     });
 
     await this.setStatus(call.id, "SPEAKING");
@@ -367,8 +369,8 @@ export class CallSessionOrchestrator {
         speed: Number(call.agent.ttsSpeed),
         language: call.agent.language,
         sampleRate: call.agent.ttsSampleRate,
-        apiKey: integrations.cartesia.apiKey,
-        modelId: integrations.cartesia.modelId,
+        apiKey: integrations.gemini.apiKey,
+        modelId: integrations.gemini.ttsModel,
       });
       await this.telephonyProvider.playAudio(
         externalCallId,
@@ -391,8 +393,8 @@ export class CallSessionOrchestrator {
       speed: Number(call.agent.ttsSpeed),
       language: call.agent.language,
       sampleRate: call.agent.ttsSampleRate,
-      apiKey: integrations.cartesia.apiKey,
-      modelId: integrations.cartesia.modelId,
+      apiKey: integrations.gemini.apiKey,
+      modelId: integrations.gemini.ttsModel,
     });
     await this.setStatus(call.id, "SPEAKING");
     await this.telephonyProvider.playAudio(
@@ -420,8 +422,8 @@ export class CallSessionOrchestrator {
         speed: Number(agent.ttsSpeed),
         language: agent.language,
         sampleRate: agent.ttsSampleRate,
-        apiKey: integrations.cartesia.apiKey,
-        modelId: integrations.cartesia.modelId,
+        apiKey: integrations.gemini.apiKey,
+        modelId: integrations.gemini.ttsModel,
       });
       await this.telephonyProvider.playAudio(
         externalCallId,

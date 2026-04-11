@@ -21,12 +21,11 @@ type IntegrationsForm = {
   voximplantAccountId: string;
   voximplantApiKey: string;
   voximplantApiSecret: string;
-  cartesiaApiKey: string;
-  cartesiaVoiceId: string;
-  cartesiaModelId: string;
-  llmApiKey: string;
-  llmModel: string;
-  sttApiKey: string;
+  geminiApiKey: string;
+  geminiLlmModel: string;
+  geminiTtsModel: string;
+  geminiTtsVoice: string;
+  geminiSttModel: string;
 };
 
 type IntegrationsResponse = Partial<IntegrationsForm> & {
@@ -40,12 +39,11 @@ const empty: IntegrationsForm = {
   voximplantAccountId: "",
   voximplantApiKey: "",
   voximplantApiSecret: "",
-  cartesiaApiKey: "",
-  cartesiaVoiceId: "",
-  cartesiaModelId: "",
-  llmApiKey: "",
-  llmModel: "",
-  sttApiKey: "",
+  geminiApiKey: "",
+  geminiLlmModel: "gemini-2.5-flash",
+  geminiTtsModel: "gemini-2.5-flash-preview-tts",
+  geminiTtsVoice: "Kore",
+  geminiSttModel: "gemini-2.5-flash",
 };
 
 export default function IntegrationsPage() {
@@ -210,46 +208,39 @@ export default function IntegrationsPage() {
 
           <section className="card">
             <h3>AI providers</h3>
-            <label>Cartesia API key</label>
+            <label>Gemini API key</label>
             <input
-              value={form.cartesiaApiKey}
+              value={form.geminiApiKey}
               onChange={(event) =>
-                setForm({ ...form, cartesiaApiKey: event.target.value })
+                setForm({ ...form, geminiApiKey: event.target.value })
               }
             />
-            <label>Cartesia voice id</label>
+            <label>Gemini LLM model</label>
             <input
-              value={form.cartesiaVoiceId}
+              value={form.geminiLlmModel}
               onChange={(event) =>
-                setForm({ ...form, cartesiaVoiceId: event.target.value })
+                setForm({ ...form, geminiLlmModel: event.target.value })
               }
             />
-            <label>Cartesia model id</label>
+            <label>Gemini TTS model</label>
             <input
-              value={form.cartesiaModelId}
+              value={form.geminiTtsModel}
               onChange={(event) =>
-                setForm({ ...form, cartesiaModelId: event.target.value })
+                setForm({ ...form, geminiTtsModel: event.target.value })
               }
             />
-            <label>LLM API key</label>
+            <label>Gemini voice</label>
             <input
-              value={form.llmApiKey}
+              value={form.geminiTtsVoice}
               onChange={(event) =>
-                setForm({ ...form, llmApiKey: event.target.value })
+                setForm({ ...form, geminiTtsVoice: event.target.value })
               }
             />
-            <label>LLM model</label>
+            <label>Gemini STT model</label>
             <input
-              value={form.llmModel}
+              value={form.geminiSttModel}
               onChange={(event) =>
-                setForm({ ...form, llmModel: event.target.value })
-              }
-            />
-            <label>STT API key</label>
-            <input
-              value={form.sttApiKey}
-              onChange={(event) =>
-                setForm({ ...form, sttApiKey: event.target.value })
+                setForm({ ...form, geminiSttModel: event.target.value })
               }
             />
           </section>

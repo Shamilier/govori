@@ -7,6 +7,12 @@ export const integrationsUpdateSchema = z.object({
   voximplantAccountId: z.string().optional(),
   voximplantApiKey: z.string().optional(),
   voximplantApiSecret: z.string().optional(),
+  geminiApiKey: z.string().optional(),
+  geminiLlmModel: z.string().optional(),
+  geminiTtsModel: z.string().optional(),
+  geminiTtsVoice: z.string().optional(),
+  geminiSttModel: z.string().optional(),
+  // Legacy fields kept for compatibility with old frontend payloads.
   cartesiaApiKey: z.string().optional(),
   cartesiaVoiceId: z.string().optional(),
   cartesiaModelId: z.string().optional(),

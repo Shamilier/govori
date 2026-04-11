@@ -9,10 +9,12 @@ async function main() {
 
   const hash = await bcrypt.hash(password, 12);
   const tenant = await prisma.tenant.upsert({
-    where: { name: "Default Tenant" },
-    update: {},
+    where: { slug: "default" },
+    update: { isActive: true },
     create: {
       name: "Default Tenant",
+      slug: "default",
+      isActive: true,
     },
   });
 
@@ -45,7 +47,14 @@ async function main() {
         fallbackText: "Извините, я не расслышал. Повторите, пожалуйста.",
         goodbyeText: "Спасибо за звонок. Хорошего дня!",
         language: "ru-RU",
-        ttsVoiceId: process.env.CARTESIA_VOICE_ID ?? "default",
+        tenantId: tenant.id,
+        ttsProvider: "gemini",
+        sttProvider: "gemini",
+        llmProvider: "gemini",
+        ttsVoiceId:
+          process.env.GEMINI_TTS_VOICE ??
+          process.env.CARTESIA_VOICE_ID ??
+          "Kore",
       },
     });
   }

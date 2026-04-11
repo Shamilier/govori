@@ -157,17 +157,25 @@ export class TelegramAuthService {
       return admin.tenantId;
     }
 
-    const existingTenant = await tx.tenant.findFirst({
-      orderBy: { createdAt: "asc" },
-    });
+    const existingTenant =
+      (await tx.tenant.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: "asc" },
+      })) ??
+      (await tx.tenant.findFirst({
+        orderBy: { createdAt: "asc" },
+      }));
 
     const tenant =
       existingTenant ??
       (await tx.tenant.upsert({
-        where: { name: "Default Tenant" },
-        update: {},
+        where: { slug: "default" },
+        update: { isActive: true },
         create: {
+          id: "tenant_default",
           name: "Default Tenant",
+          slug: "default",
+          isActive: true,
         },
       }));
 

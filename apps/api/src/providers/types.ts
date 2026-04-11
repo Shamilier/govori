@@ -30,6 +30,9 @@ export type SttTranscribeInput = {
   audioBase64?: string;
   hintedText?: string;
   language?: string;
+  mimeType?: string;
+  apiKey?: string | null;
+  modelId?: string | null;
 };
 
 export interface SpeechToTextProvider {
