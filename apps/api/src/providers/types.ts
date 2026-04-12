@@ -65,10 +65,32 @@ export type InboundCallEvent = {
   providerPayload: Record<string, unknown>;
 };
 
+export type OutboundCallStartInput = {
+  to: string;
+  from?: string | null;
+  assistantId?: string | null;
+  ruleId: string;
+  metadata?: Record<string, unknown>;
+  credentials?: {
+    accountId?: string | null;
+    apiKey?: string | null;
+    apiSecret?: string | null;
+  };
+};
+
+export type OutboundCallStartResult = {
+  provider: string;
+  requestId?: string;
+  raw?: Record<string, unknown>;
+};
+
 export interface TelephonyProvider {
   handleInboundWebhook(
     payload: Record<string, unknown>,
   ): Promise<InboundCallEvent>;
+  startOutboundCall(
+    input: OutboundCallStartInput,
+  ): Promise<OutboundCallStartResult>;
   answerCall(callId: string): Promise<void>;
   playAudio(callId: string, audio: Buffer, contentType: string): Promise<void>;
   hangupCall(callId: string): Promise<void>;

@@ -87,7 +87,8 @@ govori/
 │           └── calls/          # История звонков + карточка звонка
 ├── infra/
 │   ├── Caddyfile               # HTTPS reverse proxy (disciplaner.online)
-│   └── voximplant-inbound.js   # Скрипт Voximplant (медиабридж к backend)
+│   ├── voximplant-inbound.js   # Скрипт Voximplant для входящих
+│   └── voximplant-outbound.js  # Скрипт Voximplant для исходящих (StartScenarios)
 ├── docker-compose.yml          # Postgres + Redis + API + Web + Caddy
 ├── .env.example                # Пример переменных окружения
 └── README.md
@@ -226,6 +227,7 @@ PHONE_NUMBER_E164=+79XXXXXXXXX
 | GET | `/api/calls` | Список звонков с фильтрами |
 | GET | `/api/calls/:id` | Карточка звонка |
 | GET | `/api/calls/:id/transcript` | Транскрипт по репликам |
+| POST | `/api/calls/outbound` | Запустить исходящий звонок через Voximplant StartScenarios |
 
 ### Voximplant
 | Метод | Путь | Описание |
@@ -311,6 +313,7 @@ Caddy reverse proxy с автоматическим SSL. Healthcheck для Post
 ## Известные ограничения текущей версии
 
 - Один администратор, один агент, один номер (архитектура подготовлена к расширению)
-- Нет исходящих звонков, Telegram-бота, биллинга, CRM, кампаний обзвона, RBAC
+- Исходящие реализованы только как MVP endpoint `/api/calls/outbound` (без UI/кампаний)
+- Telegram-бот, биллинг, CRM, кампании обзвона, RBAC пока отсутствуют
 - Media pipeline (шаги 6-10) ещё в разработке — текущий скрипт Voximplant использует Cartesia только для приветствия
 - STT в текущей версии — OpenAI Realtime через Voximplant SDK (ограниченный контроль)

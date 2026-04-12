@@ -1,16 +1,21 @@
 /**
- * GovorI — Voximplant INBOUND Script v3.0 (Gemini Live)
+ * GovorI — Voximplant OUTBOUND Script v1.0 (Gemini Live)
  *
- * Architecture:
- *   - Gemini Live API for STT + LLM + realtime voice response
- *   - GovorI Backend for assistant config, call logs, function execution
+ * Start flow:
+ *   1) Scenario is started via Voximplant StartScenarios API
+ *   2) script_custom_data contains target phone and optional caller id / assistant id
+ *   3) Script dials PSTN via callPSTN and, after connect, runs Gemini Live session
+ *
+ * Required script_custom_data JSON:
+ *   {
+ *     "to": "+79991112233",
+ *     "from": "+79014172705",      // optional
+ *     "assistant_id": "+79014172705" // optional
+ *   }
  */
 
 require(Modules.Gemini);
 
-// ============================================================
-// CONFIGURATION — keep URLs aligned with your deployed backend
-// ============================================================
 const BACKEND_BASE_URL = "https://api.disciplaner.online";
 const WEBHOOK_SECRET = "";
 const FALLBACK_ASSISTANT_ID = "default";
@@ -46,7 +51,6 @@ function normalizePhone(value) {
     }
 
     if (/^\d+$/.test(cleaned)) {
-        // Common RU local trunk format: 8XXXXXXXXXX -> +7XXXXXXXXXX
         if (cleaned.length === 11 && cleaned.charAt(0) === "8") {
             return "+7" + cleaned.substring(1);
         }
@@ -73,44 +77,6 @@ function toFiniteNumber(value, fallback) {
 
 function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
-}
-
-function readCallMethod(call, methodName) {
-    try {
-        if (call && typeof call[methodName] === "function") {
-            return call[methodName]();
-        }
-    } catch (error) {
-        Logger.write("⚠️ Failed to read call." + methodName + ": " + error);
-    }
-
-    return null;
-}
-
-function resolveDestinationNumber(event, call) {
-    var candidates = [
-        event && event.destination_number,
-        event && event.destinationNumber,
-        event && event.called_number,
-        event && event.calledNumber,
-        event && event.did,
-        event && event.number,
-        event && event.to,
-        readCallMethod(call, "calledid"),
-        readCallMethod(call, "destination"),
-        readCallMethod(call, "did"),
-        readCallMethod(call, "number"),
-        readCallMethod(call, "to"),
-    ];
-
-    for (var i = 0; i < candidates.length; i++) {
-        var normalized = normalizePhone(candidates[i]);
-        if (normalized) {
-            return normalized;
-        }
-    }
-
-    return null;
 }
 
 function safeJsonParse(value, fallback) {
@@ -183,17 +149,14 @@ function resolveGeminiModel(config) {
         return DEFAULT_MODEL;
     }
 
-    // Gemini Live connector requires live/bidi-capable models.
     if (/live|bidi|native-audio/i.test(raw)) {
         return raw;
     }
 
-    // User requirement: stay on Gemini 2.5 Flash (Live API variant).
     if (/^gemini-3(\.|-)/i.test(raw)) {
         return DEFAULT_MODEL;
     }
 
-    // Common non-live values from legacy config that break WebSocket with 1008.
     if (/^gemini-2\.5-flash$/i.test(raw)) {
         return DEFAULT_MODEL;
     }
@@ -221,7 +184,6 @@ function resolveGeminiVoice(config) {
         return DEFAULT_VOICE;
     }
 
-    // Old Cartesia voice IDs may leak from backend config; Gemini expects prebuilt names.
     if (UUID_RE.test(raw)) {
         return DEFAULT_VOICE;
     }
@@ -229,26 +191,23 @@ function resolveGeminiVoice(config) {
     return raw;
 }
 
-// ============================================================
-// MAIN HANDLER
-// ============================================================
-VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
-    var call = event.call;
-    var geminiClient = undefined;
-    var isTerminating = false;
-    var hangupScheduled = false;
-
+async function runGeminiSession(params) {
+    var call = params.call;
+    var destinationNumber = params.destinationNumber;
+    var callerNumber = params.callerNumber || call.callerid() || "unknown";
+    var assistantId = params.assistantId || destinationNumber || FALLBACK_ASSISTANT_ID;
+    var callId = call.id();
     var chatId = "vox_" + Math.random().toString(36).substring(2, 15);
-    var callerNumber = call.callerid() || "unknown";
-    var destinationNumber = resolveDestinationNumber(event, call);
-    var assistantId = destinationNumber || FALLBACK_ASSISTANT_ID;
+
     var configUrl =
         BACKEND_BASE_URL +
         "/api/voximplant/assistants/config/" +
         encodeURIComponent(assistantId);
-    var callId = call.id();
 
-    // Conversation state
+    var geminiClient = undefined;
+    var isTerminating = false;
+    var hangupScheduled = false;
+
     var lastUserMessage = "";
     var lastAssistantMessage = "";
     var lastFunctionResult = null;
@@ -345,6 +304,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
             data: {
                 total_pairs: conversationPairCount,
                 ended_by: "disconnected",
+                direction: "outbound",
             },
         });
 
@@ -355,17 +315,14 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
     call.addEventListener(CallEvents.Disconnected, onCallEnd);
     call.addEventListener(CallEvents.Failed, onCallEnd);
 
-    call.answer();
-
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    Logger.write("📞 INBOUND CALL — GovorI v3.0 + Gemini Live");
+    Logger.write("📞 OUTBOUND CALL — GovorI + Gemini Live");
     Logger.write("   Caller: " + callerNumber + ", Call ID: " + callId);
     Logger.write("   Destination: " + (destinationNumber || "unknown"));
     Logger.write("   Assistant ID: " + assistantId);
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     try {
-        // 1. Load config from backend
         Logger.write("🔄 Loading config from backend...");
         var configResponse = await Net.httpRequestAsync(configUrl, {
             headers: buildHeaders(),
@@ -389,18 +346,17 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
         sendLogToBackend({
             type: "call_started",
             data: {
+                direction: "outbound",
                 agent_name: config.assistant_name,
             },
         });
 
-        // 2. Build Gemini tools map from backend function list
         var functionNameToIdMap = {};
         var geminiTools = mapFunctionsToGeminiTools(
             config.functions,
             functionNameToIdMap
         );
 
-        // 3. Build Gemini session config
         var agentSettings = config.agent_settings || {};
         var responseMaxTokens = clamp(
             Math.round(toFiniteNumber(agentSettings.response_max_tokens, 80)),
@@ -415,32 +371,6 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
 
         var model = resolveGeminiModel(config);
         var voiceName = resolveGeminiVoice(config);
-        var backendModelRaw = String(config.model || config.chat_model || "").trim();
-        var backendVoiceRaw =
-            config &&
-            config.voice_config &&
-            typeof config.voice_config.voice_id === "string"
-                ? config.voice_config.voice_id.trim()
-                : "";
-
-        if (backendModelRaw && backendModelRaw !== model) {
-            Logger.write(
-                "⚠️ Backend model \"" +
-                    backendModelRaw +
-                    "\" is not Gemini Live compatible. Using \"" +
-                    model +
-                    "\"."
-            );
-        }
-        if (backendVoiceRaw && backendVoiceRaw !== voiceName) {
-            Logger.write(
-                "⚠️ Backend voice \"" +
-                    backendVoiceRaw +
-                    "\" looks non-Gemini. Using \"" +
-                    voiceName +
-                    "\"."
-            );
-        }
 
         var connectConfig = {
             responseModalities: ["AUDIO"],
@@ -467,7 +397,6 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
             connectConfig.tools = geminiTools;
         }
 
-        // 4. Connect to Gemini Live
         Logger.write("🔌 Connecting to Gemini Live API...");
         geminiClient = await Gemini.createLiveAPIClient({
             apiKey: config.api_key,
@@ -484,7 +413,6 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
 
         Logger.write("✅ Gemini connected, model: " + model + ", voice: " + voiceName);
 
-        // 5. Wait for setup complete, then bridge call audio
         geminiClient.addEventListener(Gemini.LiveAPIEvents.SetupComplete, function() {
             Logger.write("✅ Gemini setup complete — bridging audio");
             VoxEngine.sendMediaBetween(call, geminiClient);
@@ -499,7 +427,6 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
             }
         });
 
-        // 6. User/assistant transcripts + barge-in
         geminiClient.addEventListener(
             Gemini.LiveAPIEvents.ServerContent,
             function(eventData) {
@@ -545,128 +472,130 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
             }
         );
 
-        // 7. Function calls from Gemini -> backend
-        geminiClient.addEventListener(Gemini.LiveAPIEvents.ToolCall, async function(eventData) {
-            try {
-                var payload =
-                    eventData && eventData.data && eventData.data.payload
-                        ? eventData.data.payload
-                        : {};
-                var functionCalls =
-                    payload && Array.isArray(payload.functionCalls)
-                        ? payload.functionCalls
-                        : [];
+        geminiClient.addEventListener(
+            Gemini.LiveAPIEvents.ToolCall,
+            async function(eventData) {
+                try {
+                    var payload =
+                        eventData && eventData.data && eventData.data.payload
+                            ? eventData.data.payload
+                            : {};
+                    var functionCalls =
+                        payload && Array.isArray(payload.functionCalls)
+                            ? payload.functionCalls
+                            : [];
 
-                if (!functionCalls.length) {
-                    return;
-                }
-
-                var responses = [];
-                var shouldHangup = false;
-
-                for (var i = 0; i < functionCalls.length; i++) {
-                    var fn = functionCalls[i] || {};
-                    var fnId = fn.id;
-                    var fnName = fn.name;
-                    var fnArgs = fn.args || {};
-
-                    if (!fnId || !fnName) {
-                        continue;
+                    if (!functionCalls.length) {
+                        return;
                     }
 
-                    Logger.write("🔧 Function: " + fnName + " — " + JSON.stringify(fnArgs));
+                    var responses = [];
+                    var shouldHangup = false;
 
-                    if (fnName === "hangup_call") {
-                        shouldHangup = true;
-                        var reason = fnArgs.reason || "agent_decision";
+                    for (var i = 0; i < functionCalls.length; i++) {
+                        var fn = functionCalls[i] || {};
+                        var fnId = fn.id;
+                        var fnName = fn.name;
+                        var fnArgs = fn.args || {};
 
-                        lastFunctionResult = {
-                            action: "call_terminated",
-                            reason: reason,
-                            timestamp: new Date().toISOString(),
-                        };
+                        if (!fnId || !fnName) {
+                            continue;
+                        }
 
-                        responses.push({
-                            id: fnId,
-                            name: fnName,
-                            response: {
-                                output: {
-                                    status: "terminating",
-                                    reason: reason,
+                        Logger.write("🔧 Function: " + fnName + " — " + JSON.stringify(fnArgs));
+
+                        if (fnName === "hangup_call") {
+                            shouldHangup = true;
+                            var reason = fnArgs.reason || "agent_decision";
+
+                            lastFunctionResult = {
+                                action: "call_terminated",
+                                reason: reason,
+                                timestamp: new Date().toISOString(),
+                            };
+
+                            responses.push({
+                                id: fnId,
+                                name: fnName,
+                                response: {
+                                    output: {
+                                        status: "terminating",
+                                        reason: reason,
+                                    },
                                 },
-                            },
+                            });
+
+                            continue;
+                        }
+
+                        var backendFunctionId = functionNameToIdMap[fnName];
+                        if (!backendFunctionId) {
+                            responses.push({
+                                id: fnId,
+                                name: fnName,
+                                response: {
+                                    error: "Unknown function: " + fnName,
+                                },
+                            });
+                            continue;
+                        }
+
+                        var funcHttp = await Net.httpRequestAsync(FUNCTIONS_URL, {
+                            headers: buildHeaders(),
+                            method: "POST",
+                            postData: JSON.stringify({
+                                function_id: backendFunctionId,
+                                arguments: fnArgs,
+                                call_data: {
+                                    call_id: callId,
+                                    chat_id: chatId,
+                                    assistant_id: assistantId,
+                                    caller_number: callerNumber,
+                                    destination_number: destinationNumber || undefined,
+                                },
+                            }),
                         });
 
-                        continue;
-                    }
+                        var funcResult;
+                        if (funcHttp.code === 200) {
+                            funcResult = safeJsonParse(funcHttp.text, { raw: funcHttp.text });
+                            Logger.write(
+                                "✅ Function result: " +
+                                    JSON.stringify(funcResult).substring(0, 150)
+                            );
+                        } else {
+                            funcResult = {
+                                error: "Function failed: HTTP " + funcHttp.code,
+                                body: funcHttp.text,
+                            };
+                            Logger.write("❌ Function failed: HTTP " + funcHttp.code);
+                        }
 
-                    var backendFunctionId = functionNameToIdMap[fnName];
-                    if (!backendFunctionId) {
+                        lastFunctionResult = funcResult;
+
                         responses.push({
                             id: fnId,
                             name: fnName,
                             response: {
-                                error: "Unknown function: " + fnName,
+                                output: funcResult,
                             },
                         });
-                        continue;
                     }
 
-                    var funcHttp = await Net.httpRequestAsync(FUNCTIONS_URL, {
-                        headers: buildHeaders(),
-                        method: "POST",
-                        postData: JSON.stringify({
-                            function_id: backendFunctionId,
-                            arguments: fnArgs,
-                            call_data: {
-                                call_id: callId,
-                                chat_id: chatId,
-                                assistant_id: assistantId,
-                                caller_number: callerNumber,
-                                destination_number: destinationNumber || undefined,
-                            },
-                        }),
-                    });
-
-                    var funcResult;
-                    if (funcHttp.code === 200) {
-                        funcResult = safeJsonParse(funcHttp.text, { raw: funcHttp.text });
-                        Logger.write(
-                            "✅ Function result: " +
-                                JSON.stringify(funcResult).substring(0, 150)
-                        );
-                    } else {
-                        funcResult = {
-                            error: "Function failed: HTTP " + funcHttp.code,
-                            body: funcHttp.text,
-                        };
-                        Logger.write("❌ Function failed: HTTP " + funcHttp.code);
+                    if (responses.length) {
+                        geminiClient.sendToolResponse({
+                            functionResponses: responses,
+                        });
                     }
 
-                    lastFunctionResult = funcResult;
-
-                    responses.push({
-                        id: fnId,
-                        name: fnName,
-                        response: {
-                            output: funcResult,
-                        },
-                    });
+                    if (shouldHangup) {
+                        scheduleHangup(3200);
+                    }
+                } catch (error) {
+                    Logger.write("❌ ToolCall handler error: " + error);
                 }
-
-                if (responses.length) {
-                    geminiClient.sendToolResponse({
-                        functionResponses: responses,
-                    });
-                }
-
-                if (shouldHangup) {
-                    scheduleHangup(3200);
-                }
-            } catch (error) {
-                Logger.write("❌ ToolCall handler error: " + error);
             }
-        });
+        );
 
         geminiClient.addEventListener(
             Gemini.LiveAPIEvents.ToolCallCancellation,
@@ -676,7 +605,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
         );
 
         Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        Logger.write("🎉 READY — GovorI v3.0 + Gemini Live");
+        Logger.write("🎉 READY — GovorI OUTBOUND + Gemini Live");
         Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     } catch (error) {
         Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -696,4 +625,62 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
 
         VoxEngine.terminate();
     }
+}
+
+VoxEngine.addEventListener(AppEvents.Started, function() {
+    var raw = VoxEngine.customData ? VoxEngine.customData() : "";
+    var data = safeJsonParse(raw || "{}", {});
+
+    var to = normalizePhone(
+        (typeof data.to === "string" && data.to) ||
+            (typeof data.destination_number === "string" && data.destination_number) ||
+            (typeof data.callee_phone === "string" && data.callee_phone) ||
+            ""
+    );
+
+    var from = normalizePhone(
+        (typeof data.from === "string" && data.from) ||
+            (typeof data.caller_id === "string" && data.caller_id) ||
+            (typeof data.source === "string" && data.source) ||
+            ""
+    );
+
+    var assistantId =
+        typeof data.assistant_id === "string" && data.assistant_id.trim().length > 0
+            ? data.assistant_id.trim()
+            : from || FALLBACK_ASSISTANT_ID;
+
+    if (!to) {
+        Logger.write("❌ OUTBOUND: missing 'to' in script_custom_data");
+        VoxEngine.terminate();
+        return;
+    }
+
+    Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    Logger.write("🚀 OUTBOUND START");
+    Logger.write("   to: " + to);
+    Logger.write("   from: " + (from || "(provider default)"));
+    Logger.write("   assistant_id: " + assistantId);
+    Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+    var pstnCall = from ? VoxEngine.callPSTN(to, from) : VoxEngine.callPSTN(to);
+
+    pstnCall.addEventListener(CallEvents.Connected, function() {
+        Logger.write("✅ PSTN connected: " + to);
+        runGeminiSession({
+            call: pstnCall,
+            destinationNumber: to,
+            callerNumber: from || pstnCall.callerid() || "unknown",
+            assistantId: assistantId,
+        });
+    });
+
+    pstnCall.addEventListener(CallEvents.Failed, function(eventData) {
+        Logger.write("❌ PSTN failed: " + JSON.stringify(eventData || {}));
+        VoxEngine.terminate();
+    });
+
+    pstnCall.addEventListener(CallEvents.Disconnected, function() {
+        Logger.write("📴 PSTN disconnected before session init");
+    });
 });

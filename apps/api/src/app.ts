@@ -110,7 +110,10 @@ export async function buildApp(
     ttsProvider,
     conversationService,
   );
-  const callsService = new CallsService(prisma);
+  const callsService = new CallsService(prisma, {
+    telephonyProvider,
+    integrationsService,
+  });
   const tenantsService = new TenantsService(prisma, auditService);
   const phoneNumbersService = new PhoneNumbersService(prisma, auditService);
   const voximplantService = new VoximplantService(

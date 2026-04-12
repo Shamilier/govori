@@ -40,6 +40,7 @@ const envSchema = z.object({
   VOXIMPLANT_ACCOUNT_ID: z.string().optional(),
   VOXIMPLANT_API_KEY: z.string().optional(),
   VOXIMPLANT_API_SECRET: z.string().optional(),
+  VOXIMPLANT_OUTBOUND_RULE_ID: z.string().optional(),
   VOXIMPLANT_WEBHOOK_SECRET: z.string().optional(),
   PHONE_NUMBER_E164: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),

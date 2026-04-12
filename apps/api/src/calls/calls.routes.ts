@@ -1,5 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import { callsQuerySchema } from "@/calls/calls.schemas.js";
+import {
+  callsQuerySchema,
+  startOutboundCallSchema,
+} from "@/calls/calls.schemas.js";
 import type { CallsService } from "@/calls/calls.service.js";
 
 type CallsRoutesDeps = {
@@ -57,6 +60,40 @@ export async function registerCallsRoutes(
       }
 
       return reply.send(data);
+    },
+  );
+
+  app.post(
+    "/api/calls/outbound",
+    {
+      preHandler: [app.authenticate, app.verifyCsrf],
+    },
+    async (request, reply) => {
+      const parsed = startOutboundCallSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply
+          .code(400)
+          .send({ error: "INVALID_PAYLOAD", details: parsed.error.flatten() });
+      }
+
+      if (!request.adminId) {
+        return reply.code(401).send({ error: "UNAUTHORIZED" });
+      }
+
+      try {
+        const data = await deps.callsService.startOutboundCall(
+          request.adminId,
+          parsed.data,
+        );
+        return reply.code(202).send(data);
+      } catch (error) {
+        return reply.code(400).send({
+          error:
+            error instanceof Error
+              ? error.message
+              : "OUTBOUND_CALL_START_FAILED",
+        });
+      }
     },
   );
 }
