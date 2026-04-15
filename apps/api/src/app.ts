@@ -32,6 +32,8 @@ import { VoximplantService } from "@/voximplant/voximplant.service.js";
 import { registerVoximplantRoutes } from "@/voximplant/voximplant.routes.js";
 import { TelegramAuthService } from "@/telegram-auth/telegram-auth.service.js";
 import { registerTelegramAuthRoutes } from "@/telegram-auth/telegram-auth.routes.js";
+import { TelegramClientService } from "@/telegram-client/telegram-client.service.js";
+import { registerTelegramClientRoutes } from "@/telegram-client/telegram-client.routes.js";
 import type { PrismaClient } from "@prisma/client";
 import type { ConversationModelProvider } from "@/providers/conversation-model.provider.js";
 import type { TelephonyProvider } from "@/providers/telephony.provider.js";
@@ -103,6 +105,11 @@ export async function buildApp(
     prisma,
     env.WEB_ORIGIN,
     env.TELEGRAM_AUTH_TOKEN_TTL_MIN,
+  );
+  const telegramClientService = new TelegramClientService(
+    prisma,
+    integrationsService,
+    telephonyProvider,
   );
   const agentService = new AgentService(
     prisma,
@@ -197,6 +204,7 @@ export async function buildApp(
   await registerHealthRoutes(app, { prisma, redis });
   await registerAuthRoutes(app, { authService, auditService });
   await registerTelegramAuthRoutes(app, { telegramAuthService });
+  await registerTelegramClientRoutes(app, { telegramClientService });
   await registerTenantsRoutes(app, { tenantsService });
   await registerPhoneNumbersRoutes(app, { phoneNumbersService });
   await registerAgentRoutes(app, { agentService });

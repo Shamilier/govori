@@ -1,6 +1,10 @@
 import { Redis } from "ioredis";
 import type { MiddlewareFn } from "grammy";
-import { createInitialSession, type BotContext, type BotSession } from "../bot.js";
+import {
+  createInitialSession,
+  type BotContext,
+  type BotSession,
+} from "../bot.js";
 
 const SESSION_KEY_PREFIX = "tg:session:";
 const DEFAULT_SESSION_TTL_SEC = 60 * 60 * 24 * 14;
@@ -66,16 +70,23 @@ export class RedisSessionStore {
   }
 
   private normalizeSession(candidate: Partial<BotSession>): BotSession {
+    let dialogState: BotSession["dialogState"] = "idle";
+    if (candidate.dialogState === "awaiting_numbers") {
+      dialogState = "awaiting_numbers";
+    } else if (candidate.dialogState === "awaiting_prompt") {
+      dialogState = "awaiting_prompt";
+    } else if (candidate.dialogState === "awaiting_voice") {
+      dialogState = "awaiting_voice";
+    }
+
     return {
       selectedAgentId:
         typeof candidate.selectedAgentId === "string"
           ? candidate.selectedAgentId
           : null,
-      dialogState:
-        candidate.dialogState === "awaiting_numbers"
-          ? "awaiting_numbers"
-          : "idle",
-      tenantId: typeof candidate.tenantId === "string" ? candidate.tenantId : null,
+      dialogState,
+      tenantId:
+        typeof candidate.tenantId === "string" ? candidate.tenantId : null,
       telegramUserId:
         typeof candidate.telegramUserId === "number"
           ? candidate.telegramUserId

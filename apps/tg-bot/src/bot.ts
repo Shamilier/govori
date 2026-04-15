@@ -4,9 +4,16 @@ import { registerAuthHandlers } from "./auth/handler.js";
 import { createAuthMiddleware } from "./auth/middleware.js";
 import { registerCampaignHandlers } from "./campaign/handler.js";
 import { registerMainMenuHandlers } from "./menu/main.js";
-import { createRedisSessionMiddleware, type RedisSessionStore } from "./session/redis.js";
+import {
+  createRedisSessionMiddleware,
+  type RedisSessionStore,
+} from "./session/redis.js";
 
-export type DialogState = "idle" | "awaiting_numbers";
+export type DialogState =
+  | "idle"
+  | "awaiting_numbers"
+  | "awaiting_prompt"
+  | "awaiting_voice";
 
 export type BotSession = {
   selectedAgentId: string | null;
@@ -50,8 +57,8 @@ export function createBot(deps: CreateBotDeps): Bot<BotContext> {
     apiClient: deps.apiClient,
     authLinkBaseUrl: deps.authLinkBaseUrl,
   });
-  registerMainMenuHandlers(bot);
-  registerCampaignHandlers(bot);
+  registerMainMenuHandlers(bot, deps.apiClient);
+  registerCampaignHandlers(bot, deps.apiClient);
 
   bot.command("help", async (ctx) => {
     await ctx.reply(
@@ -59,7 +66,7 @@ export function createBot(deps: CreateBotDeps): Bot<BotContext> {
         "Доступные команды:",
         "/start - авторизация через ссылку",
         "/menu - главное меню",
-        "/campaign - ввод номеров кампании",
+        "/campaign - запуск обзвона списка номеров",
       ].join("\n"),
     );
   });

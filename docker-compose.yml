@@ -70,6 +70,7 @@ services:
     environment:
       - BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - API_BASE_URL=http://api:4000
+      - API_SERVICE_SECRET=${TELEGRAM_BOT_SERVICE_SECRET:-}
       - REDIS_URL=redis://redis:6379
       - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET}
       - WEB_ORIGIN=${WEB_ORIGIN}

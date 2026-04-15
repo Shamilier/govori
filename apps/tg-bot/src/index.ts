@@ -14,6 +14,7 @@ const envSchema = z.object({
     .default("development"),
   BOT_TOKEN: z.string().min(1),
   API_BASE_URL: z.string().url().default("http://api:4000"),
+  API_SERVICE_SECRET: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1).default("redis://redis:6379"),
   HOST: z.string().default("0.0.0.0"),
   PORT: z.coerce.number().int().positive().default(8080),
@@ -39,7 +40,9 @@ async function start(): Promise<void> {
   const sessionStore = new RedisSessionStore(env.REDIS_URL);
   await sessionStore.connect();
 
-  const apiClient = new ApiClient(env.API_BASE_URL);
+  const apiClient = new ApiClient(env.API_BASE_URL, {
+    serviceSecret: env.API_SERVICE_SECRET ?? env.TELEGRAM_WEBHOOK_SECRET,
+  });
   const bot = createBot({
     token: env.BOT_TOKEN,
     apiClient,
@@ -47,7 +50,11 @@ async function start(): Promise<void> {
     authLinkBaseUrl: env.WEB_ORIGIN,
   });
 
-  await registerWebhook(bot, env.WEBHOOK_BASE_URL ?? env.WEB_ORIGIN, webhookPath);
+  await registerWebhook(
+    bot,
+    env.WEBHOOK_BASE_URL ?? env.WEB_ORIGIN,
+    webhookPath,
+  );
 
   const webhookHandler = webhookCallback(bot, "http");
 
