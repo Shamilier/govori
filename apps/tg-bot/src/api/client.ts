@@ -3,6 +3,7 @@ const DEFAULT_TIMEOUT_MS = 5000;
 type ApiClientOptions = {
   resolvePath?: string;
   authLinkPath?: string;
+  bindByCodePath?: string;
   telegramClientStatePath?: string;
   telegramClientPromptPath?: string;
   telegramClientVoicePath?: string;
@@ -34,6 +35,12 @@ type ResolveAuthResponse = {
 type CreateAuthLinkResponse = {
   url?: string;
   expiresAt?: string;
+};
+
+type BindByCodeResponse = {
+  tenantId?: string;
+  telegramUserId?: number;
+  boundAgentId?: string | null;
 };
 
 type TelegramClientStateResponse = {
@@ -98,6 +105,7 @@ export class ApiClient {
   private readonly baseUrl: string;
   private readonly resolvePath: string;
   private readonly authLinkPath: string;
+  private readonly bindByCodePath: string;
   private readonly telegramClientStatePath: string;
   private readonly telegramClientPromptPath: string;
   private readonly telegramClientVoicePath: string;
@@ -109,6 +117,8 @@ export class ApiClient {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.resolvePath = options.resolvePath ?? "/api/telegram/auth/resolve";
     this.authLinkPath = options.authLinkPath ?? "/api/telegram/auth/link";
+    this.bindByCodePath =
+      options.bindByCodePath ?? "/api/telegram/auth/bind-by-code";
     this.telegramClientStatePath =
       options.telegramClientStatePath ?? "/api/telegram/client/state";
     this.telegramClientPromptPath =
@@ -131,7 +141,10 @@ export class ApiClient {
 
     const payload = await this.request<ResolveAuthResponse>(
       `${this.resolvePath}?${query.toString()}`,
-      { method: "GET" },
+      {
+        method: "GET",
+        headers: this.buildServiceHeaders(),
+      },
     );
 
     if (!payload?.tenantId) {
@@ -153,6 +166,7 @@ export class ApiClient {
         method: "POST",
         headers: {
           "content-type": "application/json",
+          ...this.buildServiceHeaders(),
         },
         body: JSON.stringify(input),
       },
@@ -165,6 +179,35 @@ export class ApiClient {
     return {
       url: payload.url,
       expiresAt: payload.expiresAt,
+    };
+  }
+
+  async bindByAccessCode(
+    telegramUserId: number,
+    accessCode: string,
+  ): Promise<TelegramAuthBinding | null> {
+    const payload = await this.request<BindByCodeResponse>(
+      this.bindByCodePath,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...this.buildServiceHeaders(),
+        },
+        body: JSON.stringify({
+          telegramUserId,
+          accessCode,
+        }),
+      },
+    );
+
+    if (!payload?.tenantId) {
+      return null;
+    }
+
+    return {
+      tenantId: payload.tenantId,
+      telegramUserId: payload.telegramUserId ?? telegramUserId,
     };
   }
 

@@ -35,6 +35,7 @@ function normalizePhone(value?: string | null): string | null {
 type TelegramBinding = {
   tenantId: string;
   telegramUserId: number;
+  boundAgentId: string | null;
 };
 
 export class TelegramClientService {
@@ -46,7 +47,10 @@ export class TelegramClientService {
 
   async getState(telegramUserId: number): Promise<Record<string, unknown>> {
     const binding = await this.resolveBinding(telegramUserId);
-    const agent = await this.getOrCreateTenantAgent(binding.tenantId);
+    const agent = await this.getOrCreateTenantAgent(
+      binding.tenantId,
+      binding.boundAgentId,
+    );
 
     const calls = await this.prisma.call.findMany({
       where: { tenantId: binding.tenantId },
@@ -57,6 +61,7 @@ export class TelegramClientService {
     return {
       tenantId: binding.tenantId,
       telegramUserId: binding.telegramUserId,
+      boundAgentId: binding.boundAgentId,
       agent: {
         id: agent.id,
         name: agent.name,
@@ -83,7 +88,10 @@ export class TelegramClientService {
     input: TelegramClientUpdatePromptInput,
   ): Promise<Record<string, unknown>> {
     const binding = await this.resolveBinding(input.telegramUserId);
-    const agent = await this.getOrCreateTenantAgent(binding.tenantId);
+    const agent = await this.getOrCreateTenantAgent(
+      binding.tenantId,
+      binding.boundAgentId,
+    );
 
     const updated = await this.prisma.agent.update({
       where: { id: agent.id },
@@ -108,7 +116,10 @@ export class TelegramClientService {
     input: TelegramClientUpdateVoiceInput,
   ): Promise<Record<string, unknown>> {
     const binding = await this.resolveBinding(input.telegramUserId);
-    const agent = await this.getOrCreateTenantAgent(binding.tenantId);
+    const agent = await this.getOrCreateTenantAgent(
+      binding.tenantId,
+      binding.boundAgentId,
+    );
 
     const updated = await this.prisma.agent.update({
       where: { id: agent.id },
@@ -133,7 +144,10 @@ export class TelegramClientService {
     input: TelegramClientStartCampaignInput,
   ): Promise<Record<string, unknown>> {
     const binding = await this.resolveBinding(input.telegramUserId);
-    const agent = await this.getOrCreateTenantAgent(binding.tenantId);
+    const agent = await this.getOrCreateTenantAgent(
+      binding.tenantId,
+      binding.boundAgentId,
+    );
     const integrations = await this.integrationsService.getDecryptedForTenant(
       binding.tenantId,
     );
@@ -217,6 +231,10 @@ export class TelegramClientService {
   ): Promise<TelegramBinding> {
     const binding = await this.prisma.telegramBinding.findUnique({
       where: { telegramUserId: BigInt(telegramUserId) },
+      select: {
+        tenantId: true,
+        boundAgentId: true,
+      },
     });
 
     if (!binding) {
@@ -226,10 +244,26 @@ export class TelegramClientService {
     return {
       tenantId: binding.tenantId,
       telegramUserId,
+      boundAgentId: binding.boundAgentId,
     };
   }
 
-  private async getOrCreateTenantAgent(tenantId: string) {
+  private async getOrCreateTenantAgent(
+    tenantId: string,
+    boundAgentId?: string | null,
+  ) {
+    if (boundAgentId) {
+      const boundAgent = await this.prisma.agent.findFirst({
+        where: { id: boundAgentId, tenantId },
+      });
+
+      if (!boundAgent) {
+        throw new Error("BOUND_AGENT_NOT_FOUND");
+      }
+
+      return boundAgent;
+    }
+
     const existing =
       (await this.prisma.agent.findFirst({
         where: { tenantId, isActive: true },

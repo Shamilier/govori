@@ -73,6 +73,8 @@ export class RedisSessionStore {
     let dialogState: BotSession["dialogState"] = "idle";
     if (candidate.dialogState === "awaiting_numbers") {
       dialogState = "awaiting_numbers";
+    } else if (candidate.dialogState === "awaiting_access_code") {
+      dialogState = "awaiting_access_code";
     } else if (candidate.dialogState === "awaiting_prompt") {
       dialogState = "awaiting_prompt";
     } else if (candidate.dialogState === "awaiting_voice") {

@@ -11,6 +11,7 @@ import {
 
 export type DialogState =
   | "idle"
+  | "awaiting_access_code"
   | "awaiting_numbers"
   | "awaiting_prompt"
   | "awaiting_voice";
@@ -31,7 +32,6 @@ type CreateBotDeps = {
   token: string;
   apiClient: ApiClient;
   sessionStore: RedisSessionStore;
-  authLinkBaseUrl?: string;
 };
 
 export function createInitialSession(): BotSession {
@@ -55,7 +55,6 @@ export function createBot(deps: CreateBotDeps): Bot<BotContext> {
 
   registerAuthHandlers(bot, {
     apiClient: deps.apiClient,
-    authLinkBaseUrl: deps.authLinkBaseUrl,
   });
   registerMainMenuHandlers(bot, deps.apiClient);
   registerCampaignHandlers(bot, deps.apiClient);
@@ -64,7 +63,7 @@ export function createBot(deps: CreateBotDeps): Bot<BotContext> {
     await ctx.reply(
       [
         "Доступные команды:",
-        "/start - авторизация через ссылку",
+        "/start - привязка по коду доступа",
         "/menu - главное меню",
         "/campaign - запуск обзвона списка номеров",
       ].join("\n"),

@@ -49,6 +49,7 @@ model Admin {
   auditLogs          AdminAuditLog[]
   telegramBindings   TelegramBinding[]   @relation("TelegramBindingLinkedByAdmin")
   telegramAuthTokens TelegramAuthToken[] @relation("TelegramAuthTokenConsumedByAdmin")
+  tenantAccessCodes  TenantAccessCode[]  @relation("TenantAccessCodeCreatedByAdmin")
 
   @@index([tenantId])
   @@map("admins")
@@ -68,6 +69,7 @@ model Tenant {
   phoneNumbers        PhoneNumber[]
   integrationSettings TenantIntegrationSettings?
   telegramBindings    TelegramBinding[]
+  accessCodes         TenantAccessCode[]
 
   @@index([isActive])
   @@map("tenants")
@@ -93,13 +95,16 @@ model TelegramBinding {
   tenantId        String   @map("tenant_id")
   telegramUserId  BigInt   @unique @map("telegram_user_id")
   linkedByAdminId String?  @map("linked_by_admin_id")
+  boundAgentId    String?  @map("bound_agent_id")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   linkedByAdmin Admin? @relation("TelegramBindingLinkedByAdmin", fields: [linkedByAdminId], references: [id], onDelete: SetNull)
+  boundAgent    Agent? @relation(fields: [boundAgentId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
+  @@index([boundAgentId])
   @@map("telegram_bindings")
 }
 
@@ -121,50 +126,77 @@ model TelegramAuthToken {
 }
 
 model Agent {
-  id                  String      @id @default(cuid())
-  tenantId            String      @map("tenant_id")
+  id                  String   @id @default(cuid())
+  tenantId            String   @map("tenant_id")
   name                String
-  systemPrompt        String      @map("system_prompt")
-  greetingText        String      @map("greeting_text")
-  fallbackText        String      @map("fallback_text")
-  goodbyeText         String      @map("goodbye_text")
+  systemPrompt        String   @map("system_prompt")
+  greetingText        String   @map("greeting_text")
+  fallbackText        String   @map("fallback_text")
+  goodbyeText         String   @map("goodbye_text")
   language            String
-  isActive            Boolean     @default(true) @map("is_active")
-  interruptionEnabled Boolean     @default(true) @map("interruption_enabled")
-  silenceTimeoutMs    Int         @default(7000) @map("silence_timeout_ms")
-  maxCallDurationSec  Int         @default(300) @map("max_call_duration_sec")
-  maxTurns            Int         @default(20) @map("max_turns")
-  responseTemperature Decimal     @default(0.3) @db.Decimal(3, 2) @map("response_temperature")
-  responseMaxTokens   Int         @default(250) @map("response_max_tokens")
-  ttsProvider         String      @default("gemini") @map("tts_provider")
-  ttsVoiceId          String      @default("Kore") @map("tts_voice_id")
-  ttsSpeed            Decimal     @default(1.0) @db.Decimal(4, 2) @map("tts_speed")
-  ttsSampleRate       Int         @default(8000) @map("tts_sample_rate")
-  sttProvider         String      @default("gemini") @map("stt_provider")
-  llmProvider         String      @default("gemini") @map("llm_provider")
-  recordCalls         Boolean     @default(true) @map("record_calls")
-  ttsTestPhrase       String      @default("Это тест голоса агента") @map("tts_test_phrase")
-  createdAt           DateTime    @default(now()) @map("created_at")
-  updatedAt           DateTime    @updatedAt @map("updated_at")
+  isActive            Boolean  @default(true) @map("is_active")
+  interruptionEnabled Boolean  @default(true) @map("interruption_enabled")
+  silenceTimeoutMs    Int      @default(7000) @map("silence_timeout_ms")
+  maxCallDurationSec  Int      @default(300) @map("max_call_duration_sec")
+  maxTurns            Int      @default(20) @map("max_turns")
+  responseTemperature Decimal  @default(0.3) @map("response_temperature") @db.Decimal(3, 2)
+  responseMaxTokens   Int      @default(250) @map("response_max_tokens")
+  ttsProvider         String   @default("gemini") @map("tts_provider")
+  ttsVoiceId          String   @default("Kore") @map("tts_voice_id")
+  ttsSpeed            Decimal  @default(1.0) @map("tts_speed") @db.Decimal(4, 2)
+  ttsSampleRate       Int      @default(8000) @map("tts_sample_rate")
+  sttProvider         String   @default("gemini") @map("stt_provider")
+  llmProvider         String   @default("gemini") @map("llm_provider")
+  recordCalls         Boolean  @default(true) @map("record_calls")
+  ttsTestPhrase       String   @default("Это тест голоса агента") @map("tts_test_phrase")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
-  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  calls        Call[]
-  phoneNumbers PhoneNumber[]
+  tenant           Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  calls            Call[]
+  phoneNumbers     PhoneNumber[]
+  telegramBindings TelegramBinding[]
+  accessCodes      TenantAccessCode[]
 
   @@index([tenantId, isActive])
   @@map("agents")
 }
 
+model TenantAccessCode {
+  id               String    @id @default(cuid())
+  tenantId         String    @map("tenant_id")
+  agentId          String?   @map("agent_id")
+  label            String?
+  codeHash         String    @unique @map("code_hash")
+  isActive         Boolean   @default(true) @map("is_active")
+  expiresAt        DateTime? @map("expires_at")
+  maxUses          Int?      @map("max_uses")
+  usedCount        Int       @default(0) @map("used_count")
+  lastUsedAt       DateTime? @map("last_used_at")
+  createdByAdminId String?   @map("created_by_admin_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  agent          Agent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  createdByAdmin Admin? @relation("TenantAccessCodeCreatedByAdmin", fields: [createdByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, isActive])
+  @@index([agentId])
+  @@index([expiresAt])
+  @@map("tenant_access_codes")
+}
+
 model PhoneNumber {
-  id        String    @id @default(cuid())
-  tenantId  String    @map("tenant_id")
-  agentId   String?   @map("agent_id")
-  e164      String    @unique
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  agentId   String?  @map("agent_id")
+  e164      String   @unique
   label     String?
-  provider  String    @default("voximplant")
-  isActive  Boolean   @default(true) @map("is_active")
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
+  provider  String   @default("voximplant")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   agent  Agent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
@@ -227,9 +259,9 @@ model Call {
   createdAt            DateTime      @default(now()) @map("created_at")
   updatedAt            DateTime      @updatedAt @map("updated_at")
 
-  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  phoneNumber PhoneNumber? @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
-  agent       Agent       @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  phoneNumber PhoneNumber?  @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+  agent       Agent         @relation(fields: [agentId], references: [id], onDelete: Restrict)
   messages    CallMessage[]
   events      CallEvent[]
 
@@ -259,11 +291,11 @@ model CallMessage {
 }
 
 model CallEvent {
-  id         String   @id @default(cuid())
-  callId     String   @map("call_id")
-  eventType  String   @map("event_type")
-  payloadJson Json?   @map("payload_json")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id          String   @id @default(cuid())
+  callId      String   @map("call_id")
+  eventType   String   @map("event_type")
+  payloadJson Json?    @map("payload_json")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
 
@@ -272,13 +304,13 @@ model CallEvent {
 }
 
 model AdminAuditLog {
-  id         String   @id @default(cuid())
-  adminId    String?  @map("admin_id")
-  action     String
-  entityType String   @map("entity_type")
-  entityId   String?  @map("entity_id")
-  payloadJson Json?   @map("payload_json")
-  createdAt  DateTime @default(now()) @map("created_at")
+  id          String   @id @default(cuid())
+  adminId     String?  @map("admin_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id")
+  payloadJson Json?    @map("payload_json")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   admin Admin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
 

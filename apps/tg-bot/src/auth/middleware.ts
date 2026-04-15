@@ -4,10 +4,21 @@ import type { BotContext } from "../bot.js";
 
 const PUBLIC_COMMANDS = new Set(["start", "help"]);
 
-export function createAuthMiddleware(apiClient: ApiClient): MiddlewareFn<BotContext> {
+export function createAuthMiddleware(
+  apiClient: ApiClient,
+): MiddlewareFn<BotContext> {
   return async (ctx, next) => {
     const command = extractCommand(ctx.message?.text);
     if (command && PUBLIC_COMMANDS.has(command)) {
+      await next();
+      return;
+    }
+
+    if (
+      ctx.session.dialogState === "awaiting_access_code" &&
+      ctx.message?.text &&
+      !ctx.message.text.startsWith("/")
+    ) {
       await next();
       return;
     }
@@ -30,7 +41,7 @@ export function createAuthMiddleware(apiClient: ApiClient): MiddlewareFn<BotCont
     if (!binding) {
       if (ctx.chat) {
         await ctx.reply(
-          "Telegram пока не привязан к аккаунту GovorI. Выполните /start для авторизации.",
+          "Telegram пока не привязан. Выполните /start и введите код доступа клиента.",
         );
       }
       return;

@@ -14,14 +14,14 @@ const envSchema = z.object({
     .default("development"),
   BOT_TOKEN: z.string().min(1),
   API_BASE_URL: z.string().url().default("http://api:4000"),
-  API_SERVICE_SECRET: z.string().min(1).optional(),
+  API_SERVICE_SECRET: z.string().optional(),
   REDIS_URL: z.string().min(1).default("redis://redis:6379"),
   HOST: z.string().default("0.0.0.0"),
   PORT: z.coerce.number().int().positive().default(8080),
   WEBHOOK_PATH: z.string().default("/telegram/webhook"),
   WEBHOOK_BASE_URL: z.string().url().optional(),
   WEB_ORIGIN: z.string().url().optional(),
-  TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
+  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -35,19 +35,28 @@ if (!parsedEnv.success) {
 
 const env = parsedEnv.data;
 const webhookPath = normalizeWebhookPath(env.WEBHOOK_PATH);
+const webhookSecret = normalizeOptionalSecret(env.TELEGRAM_WEBHOOK_SECRET);
+const apiServiceSecret =
+  normalizeOptionalSecret(env.API_SERVICE_SECRET) ?? webhookSecret;
+
+if (!apiServiceSecret) {
+  console.error(
+    "Invalid tg-bot environment variables: API service secret is not configured. Set TELEGRAM_BOT_SERVICE_SECRET or TELEGRAM_WEBHOOK_SECRET.",
+  );
+  process.exit(1);
+}
 
 async function start(): Promise<void> {
   const sessionStore = new RedisSessionStore(env.REDIS_URL);
   await sessionStore.connect();
 
   const apiClient = new ApiClient(env.API_BASE_URL, {
-    serviceSecret: env.API_SERVICE_SECRET ?? env.TELEGRAM_WEBHOOK_SECRET,
+    serviceSecret: apiServiceSecret,
   });
   const bot = createBot({
     token: env.BOT_TOKEN,
     apiClient,
     sessionStore,
-    authLinkBaseUrl: env.WEB_ORIGIN,
   });
 
   await registerWebhook(
@@ -76,11 +85,11 @@ async function start(): Promise<void> {
       return;
     }
 
-    if (env.TELEGRAM_WEBHOOK_SECRET) {
+    if (webhookSecret) {
       const header = req.headers["x-telegram-bot-api-secret-token"];
       const secretFromHeader = Array.isArray(header) ? header[0] : header;
 
-      if (secretFromHeader !== env.TELEGRAM_WEBHOOK_SECRET) {
+      if (secretFromHeader !== webhookSecret) {
         res.statusCode = 401;
         res.end("unauthorized");
         return;
@@ -129,7 +138,7 @@ async function registerWebhook(
 
   try {
     await bot.api.setWebhook(webhookUrl, {
-      secret_token: env.TELEGRAM_WEBHOOK_SECRET,
+      secret_token: webhookSecret,
       allowed_updates: ["message", "callback_query"],
     });
     console.info(`Telegram webhook set to: ${webhookUrl}`);
@@ -166,6 +175,15 @@ function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
   return new Promise((resolve) => {
     server.close(() => resolve());
   });
+}
+
+function normalizeOptionalSecret(value: string | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 void start();

@@ -1,10 +1,9 @@
-import { InlineKeyboard, type Bot } from "grammy";
+import type { Bot } from "grammy";
 import type { ApiClient } from "../api/client.js";
 import type { BotContext } from "../bot.js";
 
 type RegisterAuthHandlersDeps = {
   apiClient: ApiClient;
-  authLinkBaseUrl?: string;
 };
 
 export function registerAuthHandlers(
@@ -12,33 +11,49 @@ export function registerAuthHandlers(
   deps: RegisterAuthHandlersDeps,
 ): void {
   bot.command("start", async (ctx) => {
-    if (!ctx.from || !ctx.chat) {
+    if (!ctx.from) {
       return;
     }
 
-    const authLink = await deps.apiClient.createAuthLink({
-      telegramUserId: ctx.from.id,
-      chatId: ctx.chat.id,
-    });
+    ctx.session.dialogState = "awaiting_access_code";
 
-    const fallbackLink = deps.authLinkBaseUrl
-      ? `${deps.authLinkBaseUrl.replace(/\/+$/, "")}/telegram/connect?telegram_user_id=${ctx.from.id}`
-      : null;
+    await ctx.reply(
+      "Введите код доступа клиента. Формат: `ABCD-EFGH-IJKL`.\nКод можно вводить повторно для перепривязки к другому аккаунту.",
+      {
+        parse_mode: "Markdown",
+      },
+    );
+  });
 
-    const finalLink = authLink?.url ?? fallbackLink;
+  bot.on("message:text", async (ctx, next) => {
+    if (ctx.session.dialogState !== "awaiting_access_code") {
+      await next();
+      return;
+    }
 
-    if (!finalLink) {
+    if (!ctx.from) {
+      await next();
+      return;
+    }
+
+    const text = ctx.message.text.trim();
+    if (!text || text.startsWith("/")) {
+      await next();
+      return;
+    }
+
+    const binding = await deps.apiClient.bindByAccessCode(ctx.from.id, text);
+    if (!binding) {
       await ctx.reply(
-        "Не удалось сформировать ссылку авторизации. Попробуйте позже.",
+        "Неверный код доступа. Проверьте код и попробуйте снова.",
       );
       return;
     }
 
-    const keyboard = new InlineKeyboard().url("Привязать аккаунт", finalLink);
+    ctx.session.tenantId = binding.tenantId;
+    ctx.session.telegramUserId = binding.telegramUserId;
+    ctx.session.dialogState = "idle";
 
-    await ctx.reply(
-      "Чтобы продолжить работу, привяжите Telegram к аккаунту GovorI по кнопке ниже.",
-      { reply_markup: keyboard },
-    );
+    await ctx.reply("Готово, Telegram привязан. Теперь откройте /menu.");
   });
 }
