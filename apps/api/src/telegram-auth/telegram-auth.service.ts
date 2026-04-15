@@ -218,12 +218,23 @@ export class TelegramAuthService {
   ): Promise<TelegramBindingResult> {
     const normalizedCode = this.normalizeAccessCode(input.accessCode);
     const codeHash = this.hashAccessCode(normalizedCode);
+    const legacyFormattedCode = this.formatAccessCode(normalizedCode);
+    const legacyCodeHash =
+      legacyFormattedCode === normalizedCode
+        ? null
+        : this.hashAccessCode(legacyFormattedCode);
     const now = new Date();
 
     return this.prisma.$transaction(async (tx) => {
-      const accessCode = await tx.tenantAccessCode.findUnique({
+      let accessCode = await tx.tenantAccessCode.findUnique({
         where: { codeHash },
       });
+
+      if (!accessCode && legacyCodeHash) {
+        accessCode = await tx.tenantAccessCode.findUnique({
+          where: { codeHash: legacyCodeHash },
+        });
+      }
 
       if (!accessCode) {
         throw new TelegramAuthError(
@@ -330,9 +341,10 @@ export class TelegramAuthService {
     }
 
     const tenantId = this.requireAdminTenant(admin.tenantId);
-    const accessCode = input.accessCode
+    const normalizedAccessCode = input.accessCode
       ? this.normalizeAccessCode(input.accessCode)
       : this.generateAccessCode();
+    const accessCode = this.formatAccessCode(normalizedAccessCode);
 
     if (input.agentId) {
       const agent = await this.prisma.agent.findFirst({
@@ -357,7 +369,7 @@ export class TelegramAuthService {
           tenantId,
           agentId: input.agentId ?? null,
           label: input.label?.trim() || null,
-          codeHash: this.hashAccessCode(accessCode),
+          codeHash: this.hashAccessCode(normalizedAccessCode),
           isActive: true,
           expiresAt: input.expiresAt ?? null,
           maxUses: input.maxUses ?? null,
@@ -532,7 +544,14 @@ export class TelegramAuthService {
     for (let i = 0; i < bytes.length; i++) {
       code += ACCESS_CODE_CHARS.charAt(bytes[i] % ACCESS_CODE_CHARS.length);
     }
-    return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8, 12)}`;
+    return code;
+  }
+
+  private formatAccessCode(accessCode: string): string {
+    if (accessCode.length !== 12) {
+      return accessCode;
+    }
+    return `${accessCode.slice(0, 4)}-${accessCode.slice(4, 8)}-${accessCode.slice(8, 12)}`;
   }
 
   private requireAdminTenant(tenantId: string | null): string {
