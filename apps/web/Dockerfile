@@ -7,7 +7,11 @@ COPY apps/web/package.json apps/web/package.json
 RUN npm install
 
 COPY . .
-RUN npm run build -w apps/web
+RUN npm run build -w apps/web \
+  && cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/static
 
 EXPOSE 3000
-CMD ["npm", "run", "start", "-w", "apps/web"]
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+CMD ["node", "apps/web/.next/standalone/apps/web/server.js"]
