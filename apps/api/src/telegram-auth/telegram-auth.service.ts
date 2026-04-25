@@ -204,7 +204,6 @@ export class TelegramAuthService {
           consumedByAdminId: admin.id,
         },
       });
-
       return {
         tenantId: binding.tenantId,
         telegramUserId: this.toSafeNumber(binding.telegramUserId),

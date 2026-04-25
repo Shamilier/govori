@@ -7,6 +7,7 @@ export const integrationsUpdateSchema = z.object({
   voximplantAccountId: z.string().optional(),
   voximplantApiKey: z.string().optional(),
   voximplantApiSecret: z.string().optional(),
+  voximplantOutboundRuleId: z.string().optional(),
   geminiApiKey: z.string().optional(),
   geminiLlmModel: z.string().optional(),
   geminiTtsModel: z.string().optional(),

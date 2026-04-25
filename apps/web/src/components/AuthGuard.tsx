@@ -30,7 +30,7 @@ export function AuthGuard({ children }: PropsWithChildren) {
   }, [router]);
 
   if (!ready) {
-    return <div className="loading">Проверка сессии...</div>;
+    return <div className="loading">Проверка сессии</div>;
   }
 
   return <>{children}</>;

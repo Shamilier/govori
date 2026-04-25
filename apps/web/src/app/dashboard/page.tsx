@@ -1,5 +1,15 @@
 "use client";
 
+import {
+  Activity,
+  ArrowUpRight,
+  Bot,
+  CheckCircle2,
+  Clock3,
+  PhoneCall,
+  PlugZap,
+  RadioTower,
+} from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -15,6 +25,17 @@ type CallItem = {
   summary: string | null;
 };
 
+type HealthResponse = {
+  ok?: boolean;
+  checks?: Record<string, { ok?: boolean; provider?: string }>;
+};
+
+function statusClass(status: string): string {
+  if (status === "COMPLETED") return "ok";
+  if (status === "FAILED") return "danger";
+  return "warn";
+}
+
 export default function DashboardPage() {
   const [agent, setAgent] = useState<Record<string, unknown> | null>(null);
   const [integrations, setIntegrations] = useState<Record<
@@ -22,7 +43,7 @@ export default function DashboardPage() {
     unknown
   > | null>(null);
   const [calls, setCalls] = useState<CallItem[]>([]);
-  const [health, setHealth] = useState<Record<string, unknown> | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -35,7 +56,7 @@ export default function DashboardPage() {
         apiFetch<Record<string, unknown>>("/api/agent"),
         apiFetch<Record<string, unknown>>("/api/integrations"),
         apiFetch<{ items: CallItem[] }>("/api/calls?limit=10"),
-        apiFetch<Record<string, unknown>>("/api/integrations/health", {
+        apiFetch<HealthResponse>("/api/integrations/health", {
           method: "POST",
           body: {},
         }),
@@ -57,84 +78,178 @@ export default function DashboardPage() {
     ).length;
   }, [calls]);
 
-  const lastSuccessCall = useMemo(
-    () => calls.find((call) => call.status === "COMPLETED")?.startedAt ?? null,
-    [calls],
-  );
+  const completedCount = calls.filter((call) => call.status === "COMPLETED").length;
+  const lastSuccessCall =
+    calls.find((call) => call.status === "COMPLETED")?.startedAt ?? null;
+  const healthChecks = Object.entries(health?.checks ?? {});
 
   return (
     <AuthGuard>
-      <NavBar />
-      <main className="page">
-        <h1>Dashboard</h1>
-        <div className="grid">
-          <section className="card">
-            <h3>Agent status</h3>
-            <p>
-              <span
-                className="status-dot"
-                style={{ background: agent?.isActive ? "#16a34a" : "#b91c1c" }}
-              />
-              {String(agent?.isActive ? "Active" : "Inactive")}
-            </p>
-            <p>Voice: {String(agent?.ttsVoiceId ?? "-")}</p>
-          </section>
-          <section className="card">
-            <h3>Connected number</h3>
-            <p>{String(integrations?.phoneNumberE164 ?? "-")}</p>
-            <p>Provider: {String(integrations?.telephonyProvider ?? "-")}</p>
-          </section>
-          <section className="card">
-            <h3>Calls today</h3>
-            <p style={{ fontSize: 28, margin: 0 }}>{todayCallsCount}</p>
-          </section>
-          <section className="card">
-            <h3>Last successful call</h3>
-            <p>
-              {lastSuccessCall
-                ? new Date(lastSuccessCall).toLocaleString()
-                : "No completed calls yet"}
-            </p>
-          </section>
-        </div>
+      <div className="app-shell">
+        <NavBar />
+        <main className="page">
+          <div className="page-header">
+            <div>
+              <p className="eyebrow">Operations</p>
+              <h1>Command Center</h1>
+              <p className="page-lede">
+                Пульс агентов, телефонии и последних разговоров.
+              </p>
+            </div>
+            <span className={`badge ${health?.ok === false ? "danger" : "ok"}`}>
+              <span className="status-dot" />
+              {health?.ok === false ? "Degraded" : "Systems ready"}
+            </span>
+          </div>
 
-        <section className="card" style={{ marginTop: 14 }}>
-          <h3>Integration health</h3>
-          <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-            {JSON.stringify(health, null, 2)}
-          </pre>
-        </section>
+          <section className="grid-tight" style={{ marginBottom: 14 }}>
+            <div className="metric-card">
+              <div className="metric-top">
+                <div>
+                  <div className="metric-label">Agent</div>
+                  <div className="metric-value">
+                    {agent?.isActive ? "Live" : "Off"}
+                  </div>
+                </div>
+                <div className="icon-box">
+                  <Bot size={20} strokeWidth={2.4} />
+                </div>
+              </div>
+              <p className="metric-note">Voice: {String(agent?.ttsVoiceId ?? "-")}</p>
+            </div>
 
-        <section className="card" style={{ marginTop: 14 }}>
-          <h3>Recent calls</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Started</th>
-                <th>Caller</th>
-                <th>Status</th>
-                <th>Duration</th>
-                <th>Summary</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {calls.slice(0, 5).map((call) => (
-                <tr key={call.id}>
-                  <td>{new Date(call.startedAt).toLocaleString()}</td>
-                  <td>{call.callerPhone ?? "-"}</td>
-                  <td>{call.status}</td>
-                  <td>{call.durationSec ?? "-"}</td>
-                  <td>{call.summary ?? "-"}</td>
-                  <td>
-                    <Link href={`/calls/${call.id}`}>Open</Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      </main>
+            <div className="metric-card">
+              <div className="metric-top">
+                <div>
+                  <div className="metric-label">Number</div>
+                  <div className="metric-value" style={{ fontSize: 22 }}>
+                    {String(integrations?.phoneNumberE164 ?? "-")}
+                  </div>
+                </div>
+                <div className="icon-box">
+                  <RadioTower size={20} strokeWidth={2.4} />
+                </div>
+              </div>
+              <p className="metric-note">
+                Provider: {String(integrations?.telephonyProvider ?? "-")}
+              </p>
+            </div>
+
+            <div className="metric-card">
+              <div className="metric-top">
+                <div>
+                  <div className="metric-label">Today</div>
+                  <div className="metric-value">{todayCallsCount}</div>
+                </div>
+                <div className="icon-box">
+                  <PhoneCall size={20} strokeWidth={2.4} />
+                </div>
+              </div>
+              <p className="metric-note">{completedCount} completed in latest list</p>
+            </div>
+
+            <div className="metric-card">
+              <div className="metric-top">
+                <div>
+                  <div className="metric-label">Last success</div>
+                  <div className="metric-value" style={{ fontSize: 22 }}>
+                    {lastSuccessCall
+                      ? new Date(lastSuccessCall).toLocaleTimeString()
+                      : "-"}
+                  </div>
+                </div>
+                <div className="icon-box">
+                  <Clock3 size={20} strokeWidth={2.4} />
+                </div>
+              </div>
+              <p className="metric-note">
+                {lastSuccessCall
+                  ? new Date(lastSuccessCall).toLocaleDateString()
+                  : "No completed calls yet"}
+              </p>
+            </div>
+          </section>
+
+          <div className="grid" style={{ alignItems: "start" }}>
+            <section className="panel" style={{ gridColumn: "span 2" }}>
+              <div className="panel-header">
+                <h3>Recent calls</h3>
+                <Link className="link-action" href="/calls">
+                  Open calls <ArrowUpRight size={15} strokeWidth={2.5} />
+                </Link>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Started</th>
+                      <th>Caller</th>
+                      <th>Status</th>
+                      <th>Duration</th>
+                      <th>Summary</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {calls.slice(0, 7).map((call) => (
+                      <tr key={call.id}>
+                        <td>{new Date(call.startedAt).toLocaleString()}</td>
+                        <td>{call.callerPhone ?? "-"}</td>
+                        <td>
+                          <span className={`badge ${statusClass(call.status)}`}>
+                            <span className="status-dot" />
+                            {call.status}
+                          </span>
+                        </td>
+                        <td>{call.durationSec ?? "-"}</td>
+                        <td>{call.summary ?? "-"}</td>
+                        <td>
+                          <Link className="link-action" href={`/calls/${call.id}`}>
+                            Open <ArrowUpRight size={15} strokeWidth={2.5} />
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Provider health</h3>
+                <PlugZap size={17} strokeWidth={2.5} />
+              </div>
+              <div className="panel-body stack">
+                {healthChecks.length === 0 ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    Health check pending.
+                  </p>
+                ) : (
+                  healthChecks.map(([name, check]) => (
+                    <div className="metric-top" key={name}>
+                      <div>
+                        <strong>{name}</strong>
+                        <p className="metric-note">
+                          {check.provider ?? "provider"}
+                        </p>
+                      </div>
+                      <span className={`badge ${check.ok === false ? "danger" : "ok"}`}>
+                        {check.ok === false ? (
+                          <Activity size={14} strokeWidth={2.5} />
+                        ) : (
+                          <CheckCircle2 size={14} strokeWidth={2.5} />
+                        )}
+                        {check.ok === false ? "Issue" : "OK"}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          </div>
+        </main>
+      </div>
     </AuthGuard>
   );
 }

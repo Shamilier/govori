@@ -27,6 +27,21 @@ function normalizePhone(value?: string): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+function resolveCallDirection(
+  input: VoximplantLogInput,
+): "INBOUND" | "OUTBOUND" | null {
+  const rawDirection =
+    typeof input.data.direction === "string"
+      ? input.data.direction.toLowerCase()
+      : "";
+
+  if (!rawDirection) {
+    return null;
+  }
+
+  return rawDirection === "outbound" ? "OUTBOUND" : "INBOUND";
+}
+
 function clampNumber(
   value: number,
   min: number,
@@ -334,11 +349,13 @@ export class VoximplantService {
       tenantId,
       preferredAgentId: phoneNumber?.agentId,
     });
+    const direction = resolveCallDirection(input);
 
     const call = await this.prisma.call.upsert({
       where: { externalCallId: input.call_id },
       create: {
         externalCallId: input.call_id,
+        direction: direction ?? "INBOUND",
         tenantId,
         phoneNumberId: phoneNumber?.id ?? null,
         agentId: agent.id,
@@ -353,6 +370,7 @@ export class VoximplantService {
         tenantId,
         phoneNumberId: phoneNumber?.id ?? null,
         agentId: agent.id,
+        ...(direction ? { direction } : {}),
       },
     });
 

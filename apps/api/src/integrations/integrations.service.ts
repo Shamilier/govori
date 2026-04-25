@@ -18,6 +18,7 @@ export type DecryptedIntegrationSettings = {
     accountId: string | null;
     apiKey: string | null;
     apiSecret: string | null;
+    outboundRuleId: string | null;
   };
   gemini: {
     apiKey: string | null;
@@ -114,6 +115,7 @@ export class IntegrationsService {
       accountId: string | null;
       apiKey: string | null;
       apiSecret: string | null;
+      outboundRuleId: string | null;
     };
     gemini: {
       apiKey: string | null;
@@ -219,6 +221,7 @@ export class IntegrationsService {
       voximplantAccountId: decrypted.voximplant.accountId,
       voximplantApiKey: maskValue(decrypted.voximplant.apiKey),
       voximplantApiSecret: maskValue(decrypted.voximplant.apiSecret),
+      voximplantOutboundRuleId: decrypted.voximplant.outboundRuleId,
       geminiApiKey: maskValue(decrypted.gemini.apiKey),
       geminiLlmModel: decrypted.gemini.llmModel,
       geminiTtsModel: decrypted.gemini.ttsModel,
@@ -270,6 +273,10 @@ export class IntegrationsService {
           decryptNullable(readString(voximplant, "apiSecretEnc")) ??
           env.VOXIMPLANT_API_SECRET ??
           null,
+        outboundRuleId:
+          readString(voximplant, "outboundRuleId") ??
+          env.VOXIMPLANT_OUTBOUND_RULE_ID ??
+          null,
       },
       gemini,
     });
@@ -319,6 +326,9 @@ export class IntegrationsService {
         apiSecret:
           decryptNullable(readString(params.voximplant, "apiSecretEnc")) ??
           params.fallback.voximplant.apiSecret,
+        outboundRuleId:
+          readString(params.voximplant, "outboundRuleId") ??
+          params.fallback.voximplant.outboundRuleId,
       },
       gemini,
     });
@@ -371,6 +381,7 @@ export class IntegrationsService {
       voximplantAccountId: decrypted.voximplant.accountId,
       voximplantApiKey: maskValue(decrypted.voximplant.apiKey),
       voximplantApiSecret: maskValue(decrypted.voximplant.apiSecret),
+      voximplantOutboundRuleId: decrypted.voximplant.outboundRuleId,
       geminiApiKey: maskValue(decrypted.gemini.apiKey),
       geminiLlmModel: decrypted.gemini.llmModel,
       geminiTtsModel: decrypted.gemini.ttsModel,
@@ -427,6 +438,10 @@ export class IntegrationsService {
         input.voximplantApiSecret,
         readString(prevVox, "apiSecretEnc"),
       ),
+      outboundRuleId:
+        normalizeNonEmpty(input.voximplantOutboundRuleId) ??
+        readString(prevVox, "outboundRuleId") ??
+        fallback.voximplant.outboundRuleId,
     };
 
     const nextGeminiLlmModel =
@@ -531,6 +546,11 @@ export class IntegrationsService {
         input.voximplantApiSecret,
         readString(prevVox, "apiSecretEnc"),
       ),
+      outboundRuleId:
+        normalizeNonEmpty(input.voximplantOutboundRuleId) ??
+        readString(prevVox, "outboundRuleId") ??
+        env.VOXIMPLANT_OUTBOUND_RULE_ID ??
+        null,
     };
 
     const nextGeminiLlmModel =

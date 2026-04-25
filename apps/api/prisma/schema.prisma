@@ -9,6 +9,7 @@ datasource db {
 
 enum CallDirection {
   INBOUND
+  OUTBOUND
 }
 
 enum CallStatus {
@@ -68,6 +69,7 @@ model Tenant {
   calls               Call[]
   phoneNumbers        PhoneNumber[]
   integrationSettings TenantIntegrationSettings?
+  crmIntegration      TenantCrmIntegration?
   telegramBindings    TelegramBinding[]
   accessCodes         TenantAccessCode[]
 
@@ -235,6 +237,24 @@ model TenantIntegrationSettings {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@map("tenant_integration_settings")
+}
+
+model TenantCrmIntegration {
+  id          String   @id @default(cuid())
+  tenantId    String   @unique @map("tenant_id")
+  provider    String
+  name        String
+  isActive    Boolean  @default(false) @map("is_active")
+  configJson  Json     @default("{}") @map("config_json")
+  mappingJson Json     @default("{}") @map("mapping_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([provider])
+  @@index([isActive])
+  @@map("tenant_crm_integrations")
 }
 
 model Call {

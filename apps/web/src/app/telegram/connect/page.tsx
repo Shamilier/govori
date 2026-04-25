@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CheckCircle2, KeyRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ApiError, apiFetch } from "@/lib/api";
 
@@ -94,8 +95,9 @@ export default function TelegramConnectPage() {
     : "/telegram/connect";
 
   return (
-    <main className="page" style={{ maxWidth: 560, paddingTop: 80 }}>
-      <section className="card">
+    <main className="login-shell">
+      <section className="login-card">
+        <p className="eyebrow">Telegram access</p>
         <h1>Привязка Telegram</h1>
 
         {!token && (
@@ -112,14 +114,9 @@ export default function TelegramConnectPage() {
             <p>Для завершения привязки нужно войти в админку GovorI.</p>
             <Link
               href={`/login?next=${encodeURIComponent(loginNextPath)}`}
-              style={{
-                display: "inline-block",
-                borderRadius: 10,
-                padding: "10px 14px",
-                background: "var(--primary)",
-                color: "#fff",
-              }}
+              className="link-action"
             >
+              <KeyRound size={16} strokeWidth={2.5} />
               Войти и продолжить
             </Link>
           </>
@@ -131,8 +128,12 @@ export default function TelegramConnectPage() {
 
         {bindState === "success" && (
           <>
-            <p style={{ color: "#0f766e" }}>{message}</p>
-            <Link href="/dashboard">Перейти в дашборд</Link>
+            <p className="message ok">
+              <CheckCircle2 size={16} strokeWidth={2.5} /> {message}
+            </p>
+            <Link className="link-action" href="/dashboard">
+              Перейти в дашборд
+            </Link>
           </>
         )}
 

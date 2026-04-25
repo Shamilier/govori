@@ -1,5 +1,6 @@
 "use client";
 
+import { Bot, BrainCircuit, Save, SlidersHorizontal, Volume2 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { AuthGuard } from "@/components/AuthGuard";
 import { NavBar } from "@/components/NavBar";
@@ -54,7 +55,9 @@ export default function AgentPage() {
 
     const fieldErrors = payload?.details?.fieldErrors ?? {};
     const details = Object.entries(fieldErrors)
-      .flatMap(([field, errors]) => (errors ?? []).map((msg) => `${field}: ${msg}`))
+      .flatMap(([field, errors]) =>
+        (errors ?? []).map((msg) => `${field}: ${msg}`),
+      )
       .join("; ");
 
     if (details) {
@@ -115,7 +118,7 @@ export default function AgentPage() {
 
       const audio = new Audio(url);
       await audio.play();
-    } catch (_error) {
+    } catch {
       setMessage("Ошибка теста TTS");
     }
   };
@@ -138,233 +141,319 @@ export default function AgentPage() {
 
   return (
     <AuthGuard>
-      <NavBar />
-      <main className="page">
-        <h1>Agent Settings</h1>
-        <form onSubmit={save} className="grid">
-          <section className="card">
-            <h3>Основное</h3>
-            <label>Name</label>
-            <input
-              value={form.name}
-              onChange={(event) =>
-                setForm({ ...form, name: event.target.value })
-              }
-              required
-            />
-            <label style={{ marginTop: 10 }}>Language</label>
-            <input
-              value={form.language}
-              onChange={(event) =>
-                setForm({ ...form, language: event.target.value })
-              }
-              required
-            />
-            <div className="row" style={{ marginTop: 10 }}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={form.isActive}
-                  onChange={(event) =>
-                    setForm({ ...form, isActive: event.target.checked })
-                  }
-                />{" "}
-                Active
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={form.recordCalls}
-                  onChange={(event) =>
-                    setForm({ ...form, recordCalls: event.target.checked })
-                  }
-                />{" "}
-                Record calls
-              </label>
-            </div>
-          </section>
-
-          <section className="card">
-            <h3>Промпт</h3>
-            <label>System prompt</label>
-            <textarea
-              value={form.systemPrompt}
-              onChange={(event) =>
-                setForm({ ...form, systemPrompt: event.target.value })
-              }
-            />
-            <label>Greeting</label>
-            <input
-              value={form.greetingText}
-              onChange={(event) =>
-                setForm({ ...form, greetingText: event.target.value })
-              }
-            />
-            <label>Fallback</label>
-            <input
-              value={form.fallbackText}
-              onChange={(event) =>
-                setForm({ ...form, fallbackText: event.target.value })
-              }
-            />
-            <label>Goodbye</label>
-            <input
-              value={form.goodbyeText}
-              onChange={(event) =>
-                setForm({ ...form, goodbyeText: event.target.value })
-              }
-            />
-          </section>
-
-          <section className="card">
-            <h3>Голос</h3>
-            <label>Voice ID</label>
-            <input
-              value={form.ttsVoiceId}
-              onChange={(event) =>
-                setForm({ ...form, ttsVoiceId: event.target.value })
-              }
-            />
-            <label>Speed</label>
-            <input
-              type="number"
-              step="0.1"
-              min={0.5}
-              max={2}
-              value={form.ttsSpeed}
-              onChange={(event) =>
-                setForm({ ...form, ttsSpeed: Number(event.target.value) })
-              }
-            />
-            <label>Sample rate</label>
-            <input
-              type="number"
-              min={8000}
-              max={48000}
-              value={form.ttsSampleRate}
-              onChange={(event) =>
-                setForm({ ...form, ttsSampleRate: Number(event.target.value) })
-              }
-            />
-            <label>Test phrase</label>
-            <input
-              value={form.ttsTestPhrase}
-              onChange={(event) =>
-                setForm({ ...form, ttsTestPhrase: event.target.value })
-              }
-            />
-            <div className="row" style={{ marginTop: 8 }}>
-              <button type="button" onClick={testTts}>
-                Test TTS
-              </button>
-            </div>
-            {audioUrl && (
-              <audio
-                controls
-                src={audioUrl}
-                style={{ width: "100%", marginTop: 8 }}
-              />
-            )}
-          </section>
-
-          <section className="card">
-            <h3>Поведение</h3>
-            <label>Silence timeout (ms)</label>
-            <input
-              type="number"
-              min={1000}
-              max={60000}
-              value={form.silenceTimeoutMs}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  silenceTimeoutMs: Number(event.target.value),
-                })
-              }
-            />
-            <label>Max duration (sec)</label>
-            <input
-              type="number"
-              min={30}
-              max={7200}
-              value={form.maxCallDurationSec}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  maxCallDurationSec: Number(event.target.value),
-                })
-              }
-            />
-            <label>Max turns</label>
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={form.maxTurns}
-              onChange={(event) =>
-                setForm({ ...form, maxTurns: Number(event.target.value) })
-              }
-            />
-            <label>Temperature</label>
-            <input
-              type="number"
-              step="0.1"
-              min={0}
-              max={2}
-              value={form.responseTemperature}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  responseTemperature: Number(event.target.value),
-                })
-              }
-            />
-            <label>Response max tokens</label>
-            <input
-              type="number"
-              min={32}
-              max={2048}
-              value={form.responseMaxTokens}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  responseMaxTokens: Number(event.target.value),
-                })
-              }
-            />
-          </section>
-
-          <section className="card" style={{ gridColumn: "1 / -1" }}>
-            <h3>Тест Prompt</h3>
-            <label>User text</label>
-            <textarea
-              value={promptInput}
-              onChange={(event) => setPromptInput(event.target.value)}
-            />
-            <div className="row">
-              <button type="button" className="secondary" onClick={testPrompt}>
-                Test Prompt
-              </button>
-              <button type="submit">Save</button>
-            </div>
-            {promptOutput && (
-              <div style={{ marginTop: 10 }}>
-                <label>Assistant</label>
-                <div className="card">{promptOutput}</div>
-              </div>
-            )}
-            {message && (
-              <p
-                style={{
-                  color: message.startsWith("Сохранено") ? "#166534" : "#b91c1c",
-                }}
-              >
-                {message}
+      <div className="app-shell">
+        <NavBar />
+        <main className="page">
+          <div className="page-header">
+            <div>
+              <p className="eyebrow">Voice agent</p>
+              <h1>Agent Settings</h1>
+              <p className="page-lede">
+                Промпт, голос и поведение оператора в одном профиле.
               </p>
-            )}
-          </section>
-        </form>
-      </main>
+            </div>
+            <span className={`badge ${form.isActive ? "ok" : "danger"}`}>
+              <span className="status-dot" />
+              {form.isActive ? "ACTIVE" : "INACTIVE"}
+            </span>
+          </div>
+
+          <form onSubmit={save} className="stack">
+            <div className="grid" style={{ alignItems: "start" }}>
+              <section className="panel">
+                <div className="panel-header">
+                  <h3>Основное</h3>
+                  <Bot size={17} strokeWidth={2.5} />
+                </div>
+                <div className="panel-body field-stack">
+                  <div>
+                    <label>Name</label>
+                    <input
+                      value={form.name}
+                      onChange={(event) =>
+                        setForm({ ...form, name: event.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label>Language</label>
+                    <input
+                      value={form.language}
+                      onChange={(event) =>
+                        setForm({ ...form, language: event.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="row">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={form.isActive}
+                        onChange={(event) =>
+                          setForm({ ...form, isActive: event.target.checked })
+                        }
+                      />{" "}
+                      Active
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={form.recordCalls}
+                        onChange={(event) =>
+                          setForm({ ...form, recordCalls: event.target.checked })
+                        }
+                      />{" "}
+                      Record calls
+                    </label>
+                  </div>
+                </div>
+              </section>
+
+              <section className="panel">
+                <div className="panel-header">
+                  <h3>Голос</h3>
+                  <Volume2 size={17} strokeWidth={2.5} />
+                </div>
+                <div className="panel-body field-stack">
+                  <div>
+                    <label>Voice ID</label>
+                    <input
+                      value={form.ttsVoiceId}
+                      onChange={(event) =>
+                        setForm({ ...form, ttsVoiceId: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="grid-tight">
+                    <div>
+                      <label>Speed</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min={0.5}
+                        max={2}
+                        value={form.ttsSpeed}
+                        onChange={(event) =>
+                          setForm({ ...form, ttsSpeed: Number(event.target.value) })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Sample rate</label>
+                      <input
+                        type="number"
+                        min={8000}
+                        max={48000}
+                        value={form.ttsSampleRate}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            ttsSampleRate: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label>Test phrase</label>
+                    <input
+                      value={form.ttsTestPhrase}
+                      onChange={(event) =>
+                        setForm({ ...form, ttsTestPhrase: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="row">
+                    <button type="button" onClick={testTts}>
+                      <Volume2 size={16} strokeWidth={2.5} />
+                      Test TTS
+                    </button>
+                  </div>
+                  {audioUrl && <audio controls src={audioUrl} style={{ width: "100%" }} />}
+                </div>
+              </section>
+
+              <section className="panel">
+                <div className="panel-header">
+                  <h3>Поведение</h3>
+                  <SlidersHorizontal size={17} strokeWidth={2.5} />
+                </div>
+                <div className="panel-body field-stack">
+                  <div className="grid-tight">
+                    <div>
+                      <label>Silence timeout</label>
+                      <input
+                        type="number"
+                        min={1000}
+                        max={60000}
+                        value={form.silenceTimeoutMs}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            silenceTimeoutMs: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Max duration</label>
+                      <input
+                        type="number"
+                        min={30}
+                        max={7200}
+                        value={form.maxCallDurationSec}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            maxCallDurationSec: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="grid-tight">
+                    <div>
+                      <label>Max turns</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={form.maxTurns}
+                        onChange={(event) =>
+                          setForm({ ...form, maxTurns: Number(event.target.value) })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Temperature</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min={0}
+                        max={2}
+                        value={form.responseTemperature}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            responseTemperature: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label>Response max tokens</label>
+                    <input
+                      type="number"
+                      min={32}
+                      max={2048}
+                      value={form.responseMaxTokens}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          responseMaxTokens: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Промпт</h3>
+                <BrainCircuit size={17} strokeWidth={2.5} />
+              </div>
+              <div className="panel-body field-stack">
+                <div>
+                  <label>System prompt</label>
+                  <textarea
+                    value={form.systemPrompt}
+                    onChange={(event) =>
+                      setForm({ ...form, systemPrompt: event.target.value })
+                    }
+                    style={{ minHeight: 220 }}
+                  />
+                </div>
+                <div className="grid">
+                  <div>
+                    <label>Greeting</label>
+                    <input
+                      value={form.greetingText}
+                      onChange={(event) =>
+                        setForm({ ...form, greetingText: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label>Fallback</label>
+                    <input
+                      value={form.fallbackText}
+                      onChange={(event) =>
+                        setForm({ ...form, fallbackText: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label>Goodbye</label>
+                    <input
+                      value={form.goodbyeText}
+                      onChange={(event) =>
+                        setForm({ ...form, goodbyeText: event.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Тест Prompt</h3>
+              </div>
+              <div className="panel-body field-stack">
+                <div>
+                  <label>User text</label>
+                  <textarea
+                    value={promptInput}
+                    onChange={(event) => setPromptInput(event.target.value)}
+                  />
+                </div>
+                <div className="form-footer">
+                  <div className="row">
+                    <button type="button" className="secondary" onClick={testPrompt}>
+                      <BrainCircuit size={16} strokeWidth={2.5} />
+                      Test Prompt
+                    </button>
+                    <button type="submit">
+                      <Save size={16} strokeWidth={2.5} />
+                      Save
+                    </button>
+                  </div>
+                  {message && (
+                    <p
+                      className={`message ${
+                        message.startsWith("Сохранено") ? "ok" : "error"
+                      }`}
+                    >
+                      {message}
+                    </p>
+                  )}
+                </div>
+                {promptOutput && (
+                  <div className="transcript-item assistant">
+                    <strong>Assistant</strong>
+                    <p style={{ margin: "8px 0 0" }}>{promptOutput}</p>
+                  </div>
+                )}
+              </div>
+            </section>
+          </form>
+        </main>
+      </div>
     </AuthGuard>
   );
 }

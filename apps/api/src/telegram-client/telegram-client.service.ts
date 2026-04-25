@@ -166,7 +166,9 @@ export class TelegramClientService {
       null;
 
     const ruleId =
-      input.ruleId?.trim() || env.VOXIMPLANT_OUTBOUND_RULE_ID?.trim();
+      input.ruleId?.trim() ||
+      integrations.voximplant.outboundRuleId?.trim() ||
+      env.VOXIMPLANT_OUTBOUND_RULE_ID?.trim();
     if (!ruleId) {
       throw new Error("OUTBOUND_RULE_NOT_CONFIGURED");
     }

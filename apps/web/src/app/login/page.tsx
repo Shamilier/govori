@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { ArrowRight, RadioTower } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 
@@ -35,18 +36,38 @@ export default function LoginPage() {
 
       router.replace(safeNextPath);
     } catch {
-      setError("Не удалось войти. Проверьте email/password.");
+      setError("Не удалось войти. Проверьте email и пароль.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <main className="page" style={{ maxWidth: 440, paddingTop: 80 }}>
-      <section className="card">
-        <h1>Admin Login</h1>
-        <p style={{ color: "var(--muted)" }}>MVP панель голосового агента</p>
-        <form onSubmit={onSubmit} className="grid">
+    <main className="login-shell">
+      <section className="login-card">
+        <div className="brand" style={{ borderBottom: 0, paddingBottom: 0 }}>
+          <div className="brand-mark">
+            <RadioTower size={22} strokeWidth={2.4} />
+          </div>
+          <div>
+            <div className="brand-title" style={{ color: "var(--ink)" }}>
+              GovorI
+            </div>
+            <div className="brand-subtitle" style={{ color: "var(--muted)" }}>
+              Command Center
+            </div>
+          </div>
+        </div>
+
+        <div style={{ margin: "24px 0 18px" }}>
+          <p className="eyebrow">Secure console</p>
+          <h1>Вход в панель</h1>
+          <p className="page-lede">
+            Операции, клиенты, номера и голосовые агенты в одном контуре.
+          </p>
+        </div>
+
+        <form onSubmit={onSubmit} className="field-stack">
           <div>
             <label>Email</label>
             <input
@@ -65,11 +86,10 @@ export default function LoginPage() {
               required
             />
           </div>
-          {error && (
-            <div style={{ color: "var(--danger)", fontSize: 14 }}>{error}</div>
-          )}
+          {error && <p className="message error">{error}</p>}
           <button type="submit" disabled={loading}>
-            {loading ? "Signing in..." : "Login"}
+            {loading ? "Signing in" : "Login"}
+            <ArrowRight size={16} strokeWidth={2.5} />
           </button>
         </form>
       </section>

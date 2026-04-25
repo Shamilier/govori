@@ -26,8 +26,10 @@ export const voximplantLogSchema = z.object({
     .object({
       user_message: z.string().optional(),
       assistant_message: z.string().optional(),
+      direction: z.enum(["inbound", "outbound", "INBOUND", "OUTBOUND"]).optional(),
       function_result: z.unknown().optional(),
     })
+    .passthrough()
     .optional()
     .default({}),
 });

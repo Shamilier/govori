@@ -1,5 +1,6 @@
 "use client";
 
+import { FileJson, Mic2, PhoneCall, Route, ScrollText } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AuthGuard } from "@/components/AuthGuard";
@@ -34,6 +35,12 @@ type CallDetails = {
   }>;
 };
 
+function statusClass(status: string): string {
+  if (status === "COMPLETED") return "ok";
+  if (status === "FAILED") return "danger";
+  return "warn";
+}
+
 export default function CallDetailsPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -53,90 +60,151 @@ export default function CallDetailsPage() {
   if (!data) {
     return (
       <AuthGuard>
-        <NavBar />
-        <main className="page">Loading...</main>
+        <div className="app-shell">
+          <NavBar />
+          <main className="page">
+            <div className="loading">Loading call</div>
+          </main>
+        </div>
       </AuthGuard>
     );
   }
 
   return (
     <AuthGuard>
-      <NavBar />
-      <main className="page">
-        <h1>Call Details</h1>
-
-        <section className="card">
-          <h3>Meta</h3>
-          <p>Call ID: {data.externalCallId}</p>
-          <p>Status: {data.status}</p>
-          <p>Caller: {data.callerPhone ?? "-"}</p>
-          <p>Callee: {data.calleePhone ?? "-"}</p>
-          <p>Started: {new Date(data.startedAt).toLocaleString()}</p>
-          <p>
-            Ended:{" "}
-            {data.endedAt ? new Date(data.endedAt).toLocaleString() : "-"}
-          </p>
-          <p>Duration: {data.durationSec ?? "-"}</p>
-          <p>Error: {data.errorMessage ?? "-"}</p>
-        </section>
-
-        {data.recordingUrl && (
-          <section className="card" style={{ marginTop: 12 }}>
-            <h3>Recording</h3>
-            <audio controls src={data.recordingUrl} style={{ width: "100%" }} />
-          </section>
-        )}
-
-        <section className="card" style={{ marginTop: 12 }}>
-          <h3>Timeline</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>time</th>
-                <th>event</th>
-                <th>payload</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.timeline.map((item) => (
-                <tr key={item.id}>
-                  <td>{new Date(item.createdAt).toLocaleString()}</td>
-                  <td>{item.eventType}</td>
-                  <td>
-                    <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-                      {JSON.stringify(item.payload, null, 2)}
-                    </pre>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-
-        <section className="card" style={{ marginTop: 12 }}>
-          <h3>Transcript</h3>
-          {data.transcript.map((item) => (
-            <div key={item.id} className="card" style={{ marginBottom: 8 }}>
-              <strong>{item.role}</strong>
-              <p style={{ margin: "6px 0 0 0" }}>{item.text}</p>
+      <div className="app-shell">
+        <NavBar />
+        <main className="page">
+          <div className="page-header">
+            <div>
+              <p className="eyebrow">Call detail</p>
+              <h1>{data.callerPhone ?? "Unknown caller"}</h1>
+              <p className="page-lede">External ID: {data.externalCallId}</p>
             </div>
-          ))}
-        </section>
+            <span className={`badge ${statusClass(data.status)}`}>
+              <span className="status-dot" />
+              {data.status}
+            </span>
+          </div>
 
-        <section className="card" style={{ marginTop: 12 }}>
-          <h3>Outcome JSON</h3>
-          <pre style={{ whiteSpace: "pre-wrap" }}>
-            {JSON.stringify(data.outcome, null, 2)}
-          </pre>
-        </section>
+          <section className="grid-tight" style={{ marginBottom: 14 }}>
+            <div className="metric-card">
+              <div className="metric-top">
+                <div>
+                  <div className="metric-label">Caller</div>
+                  <div className="metric-value" style={{ fontSize: 22 }}>
+                    {data.callerPhone ?? "-"}
+                  </div>
+                </div>
+                <div className="icon-box">
+                  <PhoneCall size={20} strokeWidth={2.4} />
+                </div>
+              </div>
+              <p className="metric-note">Callee: {data.calleePhone ?? "-"}</p>
+            </div>
+            <div className="metric-card">
+              <div>
+                <div className="metric-label">Started</div>
+                <div className="metric-value" style={{ fontSize: 22 }}>
+                  {new Date(data.startedAt).toLocaleTimeString()}
+                </div>
+              </div>
+              <p className="metric-note">
+                {new Date(data.startedAt).toLocaleDateString()}
+              </p>
+            </div>
+            <div className="metric-card">
+              <div>
+                <div className="metric-label">Duration</div>
+                <div className="metric-value">
+                  {data.durationSec ?? "-"}
+                  <span style={{ fontSize: 16 }}> sec</span>
+                </div>
+              </div>
+              <p className="metric-note">Error: {data.errorMessage ?? "-"}</p>
+            </div>
+          </section>
 
-        <section className="card" style={{ marginTop: 12 }}>
-          <h3>System Prompt Snapshot</h3>
-          <pre style={{ whiteSpace: "pre-wrap" }}>
-            {data.systemPromptSnapshot ?? "-"}
-          </pre>
-        </section>
-      </main>
+          {data.recordingUrl && (
+            <section className="panel" style={{ marginBottom: 14 }}>
+              <div className="panel-header">
+                <h3>Recording</h3>
+                <Mic2 size={17} strokeWidth={2.5} />
+              </div>
+              <div className="panel-body">
+                <audio controls src={data.recordingUrl} style={{ width: "100%" }} />
+              </div>
+            </section>
+          )}
+
+          <div className="grid" style={{ alignItems: "start" }}>
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Transcript</h3>
+                <ScrollText size={17} strokeWidth={2.5} />
+              </div>
+              <div className="panel-body transcript-list">
+                {data.transcript.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`transcript-item ${item.role.toLowerCase()}`}
+                  >
+                    <div className="metric-top">
+                      <strong>{item.role}</strong>
+                      <span className="muted">
+                        {new Date(item.createdAt).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <p style={{ margin: "8px 0 0" }}>{item.text}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Timeline</h3>
+                <Route size={17} strokeWidth={2.5} />
+              </div>
+              <div className="panel-body timeline-list">
+                {data.timeline.map((item) => (
+                  <div key={item.id} className="timeline-item">
+                    <div>
+                      <strong>{new Date(item.createdAt).toLocaleTimeString()}</strong>
+                      <p className="metric-note">
+                        {new Date(item.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div>
+                      <strong>{item.eventType}</strong>
+                      <pre>{JSON.stringify(item.payload, null, 2)}</pre>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+
+          <section className="panel" style={{ marginTop: 14 }}>
+            <div className="panel-header">
+              <h3>Outcome JSON</h3>
+              <FileJson size={17} strokeWidth={2.5} />
+            </div>
+            <div className="panel-body">
+              <pre>{JSON.stringify(data.outcome, null, 2)}</pre>
+            </div>
+          </section>
+
+          <section className="panel" style={{ marginTop: 14 }}>
+            <div className="panel-header">
+              <h3>System Prompt Snapshot</h3>
+            </div>
+            <div className="panel-body">
+              <pre>{data.systemPromptSnapshot ?? "-"}</pre>
+            </div>
+          </section>
+        </main>
+      </div>
     </AuthGuard>
   );
 }

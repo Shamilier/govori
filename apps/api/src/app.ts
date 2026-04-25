@@ -34,6 +34,10 @@ import { TelegramAuthService } from "@/telegram-auth/telegram-auth.service.js";
 import { registerTelegramAuthRoutes } from "@/telegram-auth/telegram-auth.routes.js";
 import { TelegramClientService } from "@/telegram-client/telegram-client.service.js";
 import { registerTelegramClientRoutes } from "@/telegram-client/telegram-client.routes.js";
+import { CrmService } from "@/crm/crm.service.js";
+import { registerCrmRoutes } from "@/crm/crm.routes.js";
+import { OnboardingService } from "@/onboarding/onboarding.service.js";
+import { registerOnboardingRoutes } from "@/onboarding/onboarding.routes.js";
 import type { PrismaClient } from "@prisma/client";
 import type { ConversationModelProvider } from "@/providers/conversation-model.provider.js";
 import type { TelephonyProvider } from "@/providers/telephony.provider.js";
@@ -123,6 +127,13 @@ export async function buildApp(
   });
   const tenantsService = new TenantsService(prisma, auditService);
   const phoneNumbersService = new PhoneNumbersService(prisma, auditService);
+  const crmService = new CrmService(prisma, auditService);
+  const onboardingService = new OnboardingService(
+    prisma,
+    auditService,
+    integrationsService,
+    crmService,
+  );
   const voximplantService = new VoximplantService(
     prisma,
     integrationsService,
@@ -205,6 +216,8 @@ export async function buildApp(
   await registerAuthRoutes(app, { authService, auditService });
   await registerTelegramAuthRoutes(app, { telegramAuthService });
   await registerTelegramClientRoutes(app, { telegramClientService });
+  await registerCrmRoutes(app, { crmService });
+  await registerOnboardingRoutes(app, { onboardingService });
   await registerTenantsRoutes(app, { tenantsService });
   await registerPhoneNumbersRoutes(app, { phoneNumbersService });
   await registerAgentRoutes(app, { agentService });

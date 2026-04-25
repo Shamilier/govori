@@ -1,16 +1,27 @@
 "use client";
 
+import {
+  Bot,
+  Building2,
+  Gauge,
+  LogOut,
+  Phone,
+  PlugZap,
+  RadioTower,
+  ScrollText,
+  Sparkles,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 
 const links = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/clients", label: "Clients" },
-  { href: "/numbers", label: "Numbers" },
-  { href: "/agent", label: "Agent" },
-  { href: "/integrations", label: "Integrations" },
-  { href: "/calls", label: "Calls" },
+  { href: "/dashboard", label: "Dashboard", Icon: Gauge },
+  { href: "/clients", label: "Clients", Icon: Building2 },
+  { href: "/numbers", label: "Numbers", Icon: Phone },
+  { href: "/agent", label: "Agent", Icon: Bot },
+  { href: "/integrations", label: "Integrations", Icon: PlugZap },
+  { href: "/calls", label: "Calls", Icon: ScrollText },
 ];
 
 export function NavBar() {
@@ -26,24 +37,42 @@ export function NavBar() {
   };
 
   return (
-    <header className="navbar">
+    <aside className="navbar">
       <div className="nav-left">
-        <div className="brand">GovorI MVP</div>
+        <div className="brand">
+          <div className="brand-mark">
+            <RadioTower size={22} strokeWidth={2.4} />
+          </div>
+          <div>
+            <div className="brand-title">GovorI</div>
+            <div className="brand-subtitle">Voice command center</div>
+          </div>
+        </div>
         <nav>
-          {links.map((item) => (
+          {links.map(({ href, label, Icon }) => (
             <Link
-              key={item.href}
-              href={item.href}
-              className={pathname.startsWith(item.href) ? "active" : ""}
+              key={href}
+              href={href}
+              className={pathname.startsWith(href) ? "active" : ""}
             >
-              {item.label}
+              <Icon size={18} strokeWidth={2.3} />
+              {label}
             </Link>
           ))}
         </nav>
       </div>
-      <button onClick={logout} className="danger" type="button">
-        Logout
-      </button>
-    </header>
+      <div className="nav-footer">
+        <div className="nav-status">
+          <span>Runtime</span>
+          <strong>
+            <Sparkles size={14} strokeWidth={2.4} /> Gemini Live ready
+          </strong>
+        </div>
+        <button onClick={logout} className="danger" type="button">
+          <LogOut size={16} strokeWidth={2.5} />
+          Logout
+        </button>
+      </div>
+    </aside>
   );
 }
