@@ -13,7 +13,6 @@ export type DialogState =
   | "idle"
   | "awaiting_access_code"
   | "awaiting_numbers"
-  | "awaiting_prompt"
   | "awaiting_voice";
 
 export type BotSession = {

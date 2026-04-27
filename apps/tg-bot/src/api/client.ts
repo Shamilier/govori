@@ -5,7 +5,6 @@ type ApiClientOptions = {
   authLinkPath?: string;
   bindByCodePath?: string;
   telegramClientStatePath?: string;
-  telegramClientPromptPath?: string;
   telegramClientVoicePath?: string;
   telegramClientCampaignPath?: string;
   timeoutMs?: number;
@@ -59,6 +58,17 @@ type TelegramClientStateResponse = {
     callerPhone?: string;
     calleePhone?: string;
     startedAt?: string;
+    endedAt?: string;
+    durationSec?: number | null;
+    recordingUrl?: string | null;
+    transcriptText?: string | null;
+    messages?: Array<{
+      id?: string;
+      role?: string;
+      text?: string;
+      sequenceNo?: number;
+      createdAt?: string;
+    }>;
   }>;
 };
 
@@ -91,6 +101,17 @@ export type TelegramClientState = {
     callerPhone: string;
     calleePhone: string;
     startedAt: string;
+    endedAt: string;
+    durationSec: number | null;
+    recordingUrl: string | null;
+    transcriptText: string;
+    messages: Array<{
+      id: string;
+      role: string;
+      text: string;
+      sequenceNo: number;
+      createdAt: string;
+    }>;
   }>;
 };
 
@@ -107,7 +128,6 @@ export class ApiClient {
   private readonly authLinkPath: string;
   private readonly bindByCodePath: string;
   private readonly telegramClientStatePath: string;
-  private readonly telegramClientPromptPath: string;
   private readonly telegramClientVoicePath: string;
   private readonly telegramClientCampaignPath: string;
   private readonly timeoutMs: number;
@@ -121,8 +141,6 @@ export class ApiClient {
       options.bindByCodePath ?? "/api/telegram/auth/bind-by-code";
     this.telegramClientStatePath =
       options.telegramClientStatePath ?? "/api/telegram/client/state";
-    this.telegramClientPromptPath =
-      options.telegramClientPromptPath ?? "/api/telegram/client/agent/prompt";
     this.telegramClientVoicePath =
       options.telegramClientVoicePath ?? "/api/telegram/client/agent/voice";
     this.telegramClientCampaignPath =
@@ -242,27 +260,21 @@ export class ApiClient {
         callerPhone: item.callerPhone ?? "",
         calleePhone: item.calleePhone ?? "",
         startedAt: item.startedAt ?? "",
+        endedAt: item.endedAt ?? "",
+        durationSec:
+          typeof item.durationSec === "number" ? item.durationSec : null,
+        recordingUrl: item.recordingUrl ?? null,
+        transcriptText: item.transcriptText ?? "",
+        messages: (item.messages ?? []).map((message) => ({
+          id: message.id ?? "",
+          role: message.role ?? "",
+          text: message.text ?? "",
+          sequenceNo:
+            typeof message.sequenceNo === "number" ? message.sequenceNo : 0,
+          createdAt: message.createdAt ?? "",
+        })),
       })),
     };
-  }
-
-  async updatePrompt(telegramUserId: number, prompt: string): Promise<boolean> {
-    const payload = await this.request<TelegramClientMutationResponse>(
-      this.telegramClientPromptPath,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...this.buildServiceHeaders(),
-        },
-        body: JSON.stringify({
-          telegramUserId,
-          prompt,
-        }),
-      },
-    );
-
-    return Boolean(payload?.ok);
   }
 
   async updateVoice(telegramUserId: number, voiceId: string): Promise<boolean> {

@@ -253,6 +253,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
     var lastAssistantMessage = "";
     var lastFunctionResult = null;
     var conversationPairCount = 0;
+    var recordingUrl = "";
 
     function scheduleHangup(delayMs) {
         if (hangupScheduled) {
@@ -270,8 +271,37 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
         }, hangupDelayMs);
     }
 
+    function startCallRecording() {
+        try {
+            if (!call || typeof call.record !== "function") {
+                return;
+            }
+
+            call.addEventListener(CallEvents.RecordStarted, function(event) {
+                recordingUrl = event && event.url ? String(event.url) : "";
+                if (recordingUrl) {
+                    sendLogToBackend({
+                        type: "recording_started",
+                        data: {
+                            recording_url: recordingUrl,
+                        },
+                    });
+                }
+            });
+
+            call.record({ stereo: true });
+        } catch (error) {
+            Logger.write("⚠️ Recording start failed: " + error);
+        }
+    }
+
     async function sendLogToBackend(extra) {
         try {
+            var data = extra.data || {};
+            if (recordingUrl && !data.recording_url) {
+                data.recording_url = recordingUrl;
+            }
+
             await Net.httpRequestAsync(LOG_URL, {
                 headers: buildHeaders(),
                 method: "POST",
@@ -282,7 +312,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
                     caller_number: callerNumber,
                     destination_number: destinationNumber || undefined,
                     type: extra.type || "conversation",
-                    data: extra.data || {},
+                    data: data,
                 }),
             });
         } catch (error) {
@@ -356,6 +386,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
     call.addEventListener(CallEvents.Failed, onCallEnd);
 
     call.answer();
+    startCallRecording();
 
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     Logger.write("📞 INBOUND CALL — GovorI v3.0 + Gemini Live");

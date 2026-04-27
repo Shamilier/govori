@@ -33,25 +33,6 @@ export function registerCampaignHandlers(
       return;
     }
 
-    if (ctx.session.dialogState === "awaiting_prompt") {
-      const prompt = text.trim();
-      if (prompt.length < 10) {
-        await ctx.reply("Промпт слишком короткий. Минимум 10 символов.");
-        return;
-      }
-
-      const ok = await apiClient.updatePrompt(ctx.from.id, prompt);
-      ctx.session.dialogState = "idle";
-
-      if (!ok) {
-        await ctx.reply("Не удалось обновить промпт. Попробуйте позже.");
-        return;
-      }
-
-      await ctx.reply("Промпт обновлен.");
-      return;
-    }
-
     if (ctx.session.dialogState === "awaiting_voice") {
       const voiceId = text.trim();
       if (!voiceId) {

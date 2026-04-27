@@ -42,6 +42,18 @@ function resolveCallDirection(
   return rawDirection === "outbound" ? "OUTBOUND" : "INBOUND";
 }
 
+function resolveRecordingUrl(input: VoximplantLogInput): string | null {
+  const candidates = [input.data.recording_url, input.data.recordingUrl];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
 function clampNumber(
   value: number,
   min: number,
@@ -350,6 +362,7 @@ export class VoximplantService {
       preferredAgentId: phoneNumber?.agentId,
     });
     const direction = resolveCallDirection(input);
+    const recordingUrl = resolveRecordingUrl(input);
 
     const call = await this.prisma.call.upsert({
       where: { externalCallId: input.call_id },
@@ -363,6 +376,7 @@ export class VoximplantService {
         calleePhone: normalizePhone(input.destination_number),
         status: "ANSWERED",
         systemPromptSnapshot: agent.systemPrompt,
+        recordingUrl: recordingUrl ?? undefined,
       },
       update: {
         callerPhone: cleanPhone(input.caller_number),
@@ -371,6 +385,7 @@ export class VoximplantService {
         phoneNumberId: phoneNumber?.id ?? null,
         agentId: agent.id,
         ...(direction ? { direction } : {}),
+        ...(recordingUrl ? { recordingUrl } : {}),
       },
     });
 

@@ -56,6 +56,12 @@ export class TelegramClientService {
       where: { tenantId: binding.tenantId },
       orderBy: { startedAt: "desc" },
       take: 10,
+      include: {
+        messages: {
+          orderBy: { sequenceNo: "asc" },
+          take: 40,
+        },
+      },
     });
 
     return {
@@ -80,6 +86,16 @@ export class TelegramClientService {
         calleePhone: call.calleePhone,
         startedAt: call.startedAt,
         endedAt: call.endedAt,
+        durationSec: call.durationSec,
+        recordingUrl: call.recordingUrl,
+        transcriptText: call.transcriptText,
+        messages: call.messages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          text: message.text,
+          sequenceNo: message.sequenceNo,
+          createdAt: message.createdAt,
+        })),
       })),
     };
   }

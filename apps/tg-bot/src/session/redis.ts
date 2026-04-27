@@ -75,8 +75,6 @@ export class RedisSessionStore {
       dialogState = "awaiting_numbers";
     } else if (candidate.dialogState === "awaiting_access_code") {
       dialogState = "awaiting_access_code";
-    } else if (candidate.dialogState === "awaiting_prompt") {
-      dialogState = "awaiting_prompt";
     } else if (candidate.dialogState === "awaiting_voice") {
       dialogState = "awaiting_voice";
     }
