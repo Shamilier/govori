@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
 import { env } from "@/common/env.js";
 import type { IntegrationsService } from "@/integrations/integrations.service.js";
 import type {
@@ -38,6 +40,26 @@ type TelegramBinding = {
   boundAgentId: string | null;
 };
 
+type VoximplantServiceAccount = {
+  account_id?: string | number;
+  key_id?: string;
+  private_key?: string;
+};
+
+type RecordingDownloadResult = {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: Buffer;
+};
+
+function base64Url(input: string | Buffer): string {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
 export class TelegramClientService {
   constructor(
     private readonly prisma: PrismaClient,
@@ -77,26 +99,32 @@ export class TelegramClientService {
         isActive: agent.isActive,
         updatedAt: agent.updatedAt,
       },
-      recentCalls: calls.map((call) => ({
-        id: call.id,
-        externalCallId: call.externalCallId,
-        status: call.status,
-        direction: call.direction,
-        callerPhone: call.callerPhone,
-        calleePhone: call.calleePhone,
-        startedAt: call.startedAt,
-        endedAt: call.endedAt,
-        durationSec: call.durationSec,
-        recordingUrl: call.recordingUrl,
-        transcriptText: call.transcriptText,
-        messages: call.messages.map((message) => ({
-          id: message.id,
-          role: message.role,
-          text: message.text,
-          sequenceNo: message.sequenceNo,
-          createdAt: message.createdAt,
-        })),
-      })),
+      recentCalls: calls.map((call) => {
+        const recordingUrl = call.recordingUrl
+          ? this.buildRecordingProxyUrl(call.id)
+          : null;
+
+        return {
+          id: call.id,
+          externalCallId: call.externalCallId,
+          status: call.status,
+          direction: call.direction,
+          callerPhone: call.callerPhone,
+          calleePhone: call.calleePhone,
+          startedAt: call.startedAt,
+          endedAt: call.endedAt,
+          durationSec: call.durationSec,
+          recordingUrl,
+          transcriptText: call.transcriptText,
+          messages: call.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            text: message.text,
+            sequenceNo: message.sequenceNo,
+            createdAt: message.createdAt,
+          })),
+        };
+      }),
     };
   }
 
@@ -244,6 +272,66 @@ export class TelegramClientService {
     };
   }
 
+  async downloadRecording(
+    callId: string,
+    token: string,
+    range?: string,
+  ): Promise<RecordingDownloadResult> {
+    if (!this.verifyRecordingToken(callId, token)) {
+      throw new Error("INVALID_RECORDING_TOKEN");
+    }
+
+    const call = await this.prisma.call.findUnique({
+      where: { id: callId },
+      select: {
+        recordingUrl: true,
+        externalCallId: true,
+      },
+    });
+
+    if (!call?.recordingUrl) {
+      throw new Error("RECORDING_NOT_FOUND");
+    }
+
+    const authHeader = this.buildVoximplantRecordingAuthHeader();
+    if (!authHeader) {
+      throw new Error("VOXIMPLANT_RECORDING_AUTH_NOT_CONFIGURED");
+    }
+
+    const headers: Record<string, string> = {
+      authorization: authHeader,
+    };
+    if (range?.trim()) {
+      headers.range = range.trim();
+    }
+
+    const response = await fetch(call.recordingUrl, { headers });
+    const body = Buffer.from(await response.arrayBuffer());
+
+    if (!response.ok) {
+      throw new Error(`VOXIMPLANT_RECORDING_FETCH_FAILED_${response.status}`);
+    }
+
+    const responseHeaders: Record<string, string> = {
+      "content-type":
+        response.headers.get("content-type") ?? "audio/mpeg",
+      "content-disposition": `inline; filename="${call.externalCallId}.mp3"`,
+    };
+
+    for (const header of ["content-length", "content-range", "accept-ranges"]) {
+      const value = response.headers.get(header);
+      if (value) {
+        responseHeaders[header] = value;
+      }
+    }
+
+    return {
+      statusCode: response.status,
+      headers: responseHeaders,
+      body,
+    };
+  }
+
   private async resolveBinding(
     telegramUserId: number,
   ): Promise<TelegramBinding> {
@@ -308,5 +396,129 @@ export class TelegramClientService {
         ttsVoiceId: "Kore",
       },
     });
+  }
+
+  private buildRecordingProxyUrl(callId: string): string {
+    const publicBaseUrl = (
+      env.PUBLIC_API_BASE_URL ||
+      env.WEB_ORIGIN ||
+      ""
+    ).replace(/\/+$/, "");
+    const token = this.createRecordingToken(callId);
+
+    return `${publicBaseUrl}/api/telegram/client/calls/${encodeURIComponent(
+      callId,
+    )}/recording?token=${encodeURIComponent(token)}`;
+  }
+
+  private createRecordingToken(callId: string): string {
+    const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+    const signature = crypto
+      .createHmac("sha256", env.JWT_SECRET)
+      .update(`${callId}.${expiresAt}`)
+      .digest("base64url");
+
+    return `${expiresAt}.${signature}`;
+  }
+
+  private verifyRecordingToken(callId: string, token: string): boolean {
+    const [expiresAtRaw, signature] = token.split(".");
+    const expiresAt = Number(expiresAtRaw);
+    if (!Number.isFinite(expiresAt) || !signature) {
+      return false;
+    }
+
+    if (expiresAt <= Math.floor(Date.now() / 1000)) {
+      return false;
+    }
+
+    const expected = crypto
+      .createHmac("sha256", env.JWT_SECRET)
+      .update(`${callId}.${expiresAt}`)
+      .digest("base64url");
+    if (signature.length !== expected.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expected),
+    );
+  }
+
+  private buildVoximplantRecordingAuthHeader(): string | null {
+    const explicitHeader = env.VOXIMPLANT_RECORDING_AUTH_HEADER?.trim();
+    if (explicitHeader) {
+      return explicitHeader;
+    }
+
+    const serviceAccount = this.readVoximplantServiceAccount();
+    if (!serviceAccount) {
+      return null;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const header = base64Url(
+      JSON.stringify({
+        alg: "RS256",
+        typ: "JWT",
+        kid: serviceAccount.key_id,
+      }),
+    );
+    const payload = base64Url(
+      JSON.stringify({
+        iss: String(serviceAccount.account_id),
+        iat: now,
+        exp: now + 64,
+      }),
+    );
+    const signingInput = `${header}.${payload}`;
+    const signer = crypto.createSign("RSA-SHA256");
+    signer.update(signingInput);
+    signer.end();
+    const signature = base64Url(signer.sign(serviceAccount.private_key));
+
+    return `Bearer ${signingInput}.${signature}`;
+  }
+
+  private readVoximplantServiceAccount(): Required<VoximplantServiceAccount> | null {
+    const raw =
+      env.VOXIMPLANT_SERVICE_ACCOUNT_JSON?.trim() ||
+      (env.VOXIMPLANT_SERVICE_ACCOUNT_KEY_PATH
+        ? readFileSync(env.VOXIMPLANT_SERVICE_ACCOUNT_KEY_PATH, "utf8")
+        : "");
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = this.parseServiceAccountJson(raw);
+    if (!parsed?.account_id || !parsed.key_id || !parsed.private_key) {
+      return null;
+    }
+
+    return {
+      account_id: parsed.account_id,
+      key_id: parsed.key_id,
+      private_key: parsed.private_key,
+    };
+  }
+
+  private parseServiceAccountJson(
+    raw: string,
+  ): VoximplantServiceAccount | null {
+    for (const candidate of [
+      raw,
+      Buffer.from(raw, "base64").toString("utf8"),
+    ]) {
+      try {
+        const parsed = JSON.parse(candidate) as VoximplantServiceAccount;
+        return parsed;
+      } catch {
+        // Try the next representation.
+      }
+    }
+
+    return null;
   }
 }

@@ -76,17 +76,20 @@ describe("TelegramClientService", () => {
         }),
       }),
     );
-    expect(result).toMatchObject({
-      recentCalls: [
-        {
-          id: "call-1",
-          recordingUrl: "https://records.example/call-1.mp3",
-          durationSec: 120,
-          messages: [
-            { role: "USER", text: "Алло" },
-            { role: "ASSISTANT", text: "Добрый день" },
-          ],
-        },
+    const calls = result.recentCalls as Array<{
+      recordingUrl: string;
+      durationSec: number;
+      messages: Array<{ role: string; text: string }>;
+    }>;
+
+    expect(calls[0].recordingUrl).toContain(
+      "/api/telegram/client/calls/call-1/recording?token=",
+    );
+    expect(calls[0]).toMatchObject({
+      durationSec: 120,
+      messages: [
+        { role: "USER", text: "Алло" },
+        { role: "ASSISTANT", text: "Добрый день" },
       ],
     });
   });

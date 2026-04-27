@@ -63,6 +63,55 @@ export async function registerTelegramClientRoutes(
     }
   });
 
+  app.get(
+    "/api/telegram/client/calls/:id/recording",
+    async (request, reply) => {
+      const params = request.params as { id?: string };
+      const query = request.query as { token?: string };
+      const callId = params.id?.trim();
+      const token = query.token?.trim();
+
+      if (!callId || !token) {
+        return reply.code(401).send({ error: "RECORDING_TOKEN_REQUIRED" });
+      }
+
+      const rangeHeader = request.headers.range;
+      const range = Array.isArray(rangeHeader) ? rangeHeader[0] : rangeHeader;
+
+      try {
+        const data = await deps.telegramClientService.downloadRecording(
+          callId,
+          token,
+          range,
+        );
+
+        for (const [name, value] of Object.entries(data.headers)) {
+          reply.header(name, value);
+        }
+
+        return reply.code(data.statusCode).send(data.body);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "RECORDING_DOWNLOAD_FAILED";
+
+        if (message === "INVALID_RECORDING_TOKEN") {
+          return reply.code(401).send({ error: message });
+        }
+        if (message === "RECORDING_NOT_FOUND") {
+          return reply.code(404).send({ error: message });
+        }
+        if (message === "VOXIMPLANT_RECORDING_AUTH_NOT_CONFIGURED") {
+          return reply.code(503).send({ error: message });
+        }
+        if (message.startsWith("VOXIMPLANT_RECORDING_FETCH_FAILED_")) {
+          return reply.code(502).send({ error: message });
+        }
+
+        throw error;
+      }
+    },
+  );
+
   app.post("/api/telegram/client/agent/prompt", async (request, reply) => {
     const invalidSecret = verifyTelegramServiceSecret(request, reply);
     if (invalidSecret) {
