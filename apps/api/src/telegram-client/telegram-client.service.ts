@@ -7,7 +7,7 @@ import type {
   TelegramClientUpdatePromptInput,
   TelegramClientUpdateVoiceInput,
 } from "@/telegram-client/telegram-client.schemas.js";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import type { TelephonyProvider } from "@/providers/telephony.provider.js";
 
 function normalizePhone(value?: string | null): string | null {
@@ -52,12 +52,133 @@ type RecordingDownloadResult = {
   body: Buffer;
 };
 
+type ReportCall = Prisma.CallGetPayload<{
+  include: {
+    messages: true;
+  };
+}>;
+
+type InterestScore = -1 | 0 | 1 | 2;
+
 function base64Url(input: string | Buffer): string {
   return Buffer.from(input)
     .toString("base64")
     .replace(/=/g, "")
     .replace(/\+/g, "-")
     .replace(/\//g, "_");
+}
+
+function asObject(value: Prisma.JsonValue | null): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function readBoolean(
+  source: Record<string, unknown>,
+  key: string,
+): boolean {
+  return source[key] === true;
+}
+
+function readString(source: Record<string, unknown>, key: string): string {
+  const value = source[key];
+  return typeof value === "string" ? value : "";
+}
+
+function getUserText(call: ReportCall): string {
+  return call.messages
+    .filter((message) => message.role === "USER")
+    .map((message) => message.text)
+    .join(" ")
+    .toLowerCase();
+}
+
+function scoreInterest(call: ReportCall): {
+  score: InterestScore;
+  label: string;
+  reason: string;
+  action: string;
+} {
+  const outcome = asObject(call.outcomeJson);
+  const userText = getUserText(call);
+  const userMessagesCount = call.messages.filter(
+    (message) => message.role === "USER",
+  ).length;
+  const durationSec = call.durationSec ?? 0;
+
+  if (
+    call.status === "FAILED" ||
+    durationSec < 10 ||
+    (call.endedAt && userMessagesCount === 0)
+  ) {
+    return {
+      score: -1,
+      label: "нет контакта",
+      reason: "Не взял трубку или разговор короче 10 секунд.",
+      action: "Можно повторить позже.",
+    };
+  }
+
+  if (
+    readBoolean(outcome, "do_not_call") ||
+    /(не\s+звон|не\s+интерес|не\s+нужно|отказ|удалите|не\s+актуально|do not call)/i.test(
+      userText,
+    )
+  ) {
+    return {
+      score: 0,
+      label: "не интересно",
+      reason: "В разговоре есть отказ или просьба не звонить.",
+      action: "Не передавать менеджеру.",
+    };
+  }
+
+  if (
+    readBoolean(outcome, "callback_requested") ||
+    /(перезвон|позвоните|свяжитесь|менеджер|оставьте\s+заяв|хочу\s+обсуд|давайте\s+созвон|callback)/i.test(
+      userText,
+    )
+  ) {
+    return {
+      score: 2,
+      label: "нужен менеджер",
+      reason: "Клиент просит контакт, звонок или менеджера.",
+      action: "Передать менеджеру в работу.",
+    };
+  }
+
+  if (
+    readBoolean(outcome, "appointment_requested") ||
+    /(интерес|расскаж|условия|цена|стоим|подроб|скинь|пришл|можно|актуально|запис)/i.test(
+      userText,
+    )
+  ) {
+    return {
+      score: 1,
+      label: "есть интерес",
+      reason: "Клиент задавал вопросы или проявил базовый интерес.",
+      action: "Прогреть: отправить информацию или вернуться позже.",
+    };
+  }
+
+  if (userMessagesCount > 0) {
+    return {
+      score: 1,
+      label: "есть контакт",
+      reason: "Разговор состоялся без явного отказа.",
+      action: "Посмотреть расшифровку.",
+    };
+  }
+
+  return {
+    score: -1,
+    label: "нет контакта",
+    reason: "Нет реплик клиента.",
+    action: "Можно повторить позже.",
+  };
 }
 
 export class TelegramClientService {
@@ -125,6 +246,86 @@ export class TelegramClientService {
           })),
         };
       }),
+    };
+  }
+
+  async getReport(
+    telegramUserId: number,
+    limit = 100,
+  ): Promise<Record<string, unknown>> {
+    const binding = await this.resolveBinding(telegramUserId);
+    const calls = await this.prisma.call.findMany({
+      where: { tenantId: binding.tenantId },
+      orderBy: { startedAt: "desc" },
+      take: limit,
+      include: {
+        messages: {
+          orderBy: { sequenceNo: "asc" },
+        },
+      },
+    });
+
+    const items = calls.map((call) => {
+      const interest = scoreInterest(call);
+      const outcome = asObject(call.outcomeJson);
+      const recordingUrl = call.recordingUrl
+        ? this.buildRecordingProxyUrl(call.id)
+        : null;
+
+      return {
+        id: call.id,
+        externalCallId: call.externalCallId,
+        status: call.status,
+        direction: call.direction,
+        callerPhone: call.callerPhone,
+        calleePhone: call.calleePhone,
+        startedAt: call.startedAt,
+        endedAt: call.endedAt,
+        durationSec: call.durationSec,
+        recordingUrl,
+        interest,
+        summary:
+          readString(outcome, "summary") ||
+          call.transcriptText?.split("\n").slice(-1)[0] ||
+          "Нет краткого итога.",
+        actionItems: Array.isArray(outcome.action_items)
+          ? outcome.action_items.filter((item): item is string => typeof item === "string")
+          : [],
+        messages: call.messages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          text: message.text,
+          sequenceNo: message.sequenceNo,
+          createdAt: message.createdAt,
+        })),
+      };
+    });
+
+    const byScore = {
+      "-1": items.filter((item) => item.interest.score === -1).length,
+      "0": items.filter((item) => item.interest.score === 0).length,
+      "1": items.filter((item) => item.interest.score === 1).length,
+      "2": items.filter((item) => item.interest.score === 2).length,
+    };
+
+    return {
+      tenantId: binding.tenantId,
+      telegramUserId: binding.telegramUserId,
+      generatedAt: new Date(),
+      scale: [
+        { score: -1, label: "не дозвонились / короткий звонок" },
+        { score: 0, label: "не интересно" },
+        { score: 1, label: "есть интерес" },
+        { score: 2, label: "нужен звонок менеджера" },
+      ],
+      summary: {
+        total: items.length,
+        byScore,
+        withRecording: items.filter((item) => item.recordingUrl).length,
+        withTranscript: items.filter((item) => item.messages.length > 0).length,
+        managerQueue: byScore["2"],
+      },
+      calls: items,
     };
   }
 

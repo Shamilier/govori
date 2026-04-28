@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { env } from "@/common/env.js";
 import {
+  telegramClientReportQuerySchema,
   telegramClientStartCampaignSchema,
   telegramClientStateQuerySchema,
   telegramClientUpdatePromptSchema,
@@ -53,6 +54,33 @@ export async function registerTelegramClientRoutes(
     try {
       const data = await deps.telegramClientService.getState(
         parsed.data.telegram_user_id,
+      );
+      return reply.send(data);
+    } catch (error) {
+      return reply.code(404).send({
+        error:
+          error instanceof Error ? error.message : "TELEGRAM_BINDING_NOT_FOUND",
+      });
+    }
+  });
+
+  app.get("/api/telegram/client/report", async (request, reply) => {
+    const invalidSecret = verifyTelegramServiceSecret(request, reply);
+    if (invalidSecret) {
+      return invalidSecret;
+    }
+
+    const parsed = telegramClientReportQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ error: "INVALID_QUERY", details: parsed.error.flatten() });
+    }
+
+    try {
+      const data = await deps.telegramClientService.getReport(
+        parsed.data.telegram_user_id,
+        parsed.data.limit,
       );
       return reply.send(data);
     } catch (error) {

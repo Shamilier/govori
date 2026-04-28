@@ -93,4 +93,90 @@ describe("TelegramClientService", () => {
       ],
     });
   });
+
+  it("builds scored report for Telegram clients", async () => {
+    const startedAt = new Date("2026-04-28T10:00:00.000Z");
+    const prisma = {
+      telegramBinding: {
+        findUnique: vi.fn().mockResolvedValue({
+          tenantId: "tenant-1",
+          boundAgentId: null,
+        }),
+      },
+      call: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "call-hot",
+            externalCallId: "vox-hot",
+            status: "COMPLETED",
+            direction: "OUTBOUND",
+            callerPhone: "+79014172705",
+            calleePhone: "+79990001122",
+            startedAt,
+            endedAt: new Date("2026-04-28T10:02:00.000Z"),
+            durationSec: 120,
+            recordingUrl: "https://records.example/hot.mp3",
+            transcriptText: "USER: Пусть менеджер перезвонит",
+            outcomeJson: { callback_requested: true, summary: "Нужен звонок менеджера" },
+            messages: [
+              {
+                id: "msg-1",
+                role: "USER",
+                text: "Пусть менеджер перезвонит",
+                sequenceNo: 1,
+                createdAt: startedAt,
+              },
+            ],
+          },
+          {
+            id: "call-short",
+            externalCallId: "vox-short",
+            status: "COMPLETED",
+            direction: "OUTBOUND",
+            callerPhone: "+79014172705",
+            calleePhone: "+79990003344",
+            startedAt,
+            endedAt: new Date("2026-04-28T10:00:05.000Z"),
+            durationSec: 5,
+            recordingUrl: null,
+            transcriptText: null,
+            outcomeJson: null,
+            messages: [],
+          },
+        ]),
+      },
+    };
+
+    const service = new TelegramClientService(
+      prisma as never,
+      {} as never,
+      {} as never,
+    );
+
+    const report = await service.getReport(1297355532, 50);
+    const summary = report.summary as {
+      total: number;
+      byScore: Record<string, number>;
+      managerQueue: number;
+    };
+    const calls = report.calls as Array<{
+      interest: { score: number };
+    }>;
+
+    expect(prisma.call.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tenantId: "tenant-1" },
+        take: 50,
+      }),
+    );
+    expect(summary).toMatchObject({
+      total: 2,
+      managerQueue: 1,
+      byScore: {
+        "-1": 1,
+        "2": 1,
+      },
+    });
+    expect(calls.map((call) => call.interest.score)).toEqual([2, -1]);
+  });
 });

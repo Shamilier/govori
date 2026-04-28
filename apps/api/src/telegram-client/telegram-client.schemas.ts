@@ -12,6 +12,11 @@ export const telegramClientStateQuerySchema = z.object({
   telegram_user_id: safeTelegramIdSchema,
 });
 
+export const telegramClientReportQuerySchema = z.object({
+  telegram_user_id: safeTelegramIdSchema,
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+});
+
 export const telegramClientUpdatePromptSchema = z.object({
   telegramUserId: safeTelegramIdSchema,
   prompt: z.string().trim().min(10).max(20000),
@@ -31,6 +36,9 @@ export const telegramClientStartCampaignSchema = z.object({
 
 export type TelegramClientStateQuery = z.infer<
   typeof telegramClientStateQuerySchema
+>;
+export type TelegramClientReportQuery = z.infer<
+  typeof telegramClientReportQuerySchema
 >;
 export type TelegramClientUpdatePromptInput = z.infer<
   typeof telegramClientUpdatePromptSchema

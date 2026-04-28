@@ -4,6 +4,11 @@ import { registerTelegramClientRoutes } from "@/telegram-client/telegram-client.
 
 const telegramClientService = {
   getState: vi.fn(async () => ({ tenantId: "tenant-1", agent: {} })),
+  getReport: vi.fn(async () => ({
+    tenantId: "tenant-1",
+    summary: { total: 1 },
+    calls: [],
+  })),
   updatePrompt: vi.fn(async () => ({ ok: true })),
   updateVoice: vi.fn(async () => ({ ok: true })),
   startCampaign: vi.fn(async () => ({ ok: true })),

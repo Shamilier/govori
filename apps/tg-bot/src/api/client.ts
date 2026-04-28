@@ -5,6 +5,7 @@ type ApiClientOptions = {
   authLinkPath?: string;
   bindByCodePath?: string;
   telegramClientStatePath?: string;
+  telegramClientReportPath?: string;
   telegramClientVoicePath?: string;
   telegramClientCampaignPath?: string;
   timeoutMs?: number;
@@ -72,6 +73,19 @@ type TelegramClientStateResponse = {
   }>;
 };
 
+type TelegramClientReportCallResponse = NonNullable<
+  TelegramClientStateResponse["recentCalls"]
+>[number] & {
+  interest?: {
+    score?: number;
+    label?: string;
+    reason?: string;
+    action?: string;
+  };
+  summary?: string;
+  actionItems?: unknown;
+};
+
 type TelegramClientMutationResponse = {
   ok?: boolean;
   agent?: {
@@ -88,6 +102,53 @@ type TelegramClientCampaignResponse = {
   started?: number;
   failed?: number;
 };
+
+type TelegramClientReportResponse = {
+  tenantId?: string;
+  generatedAt?: string;
+  summary?: {
+    total?: number;
+    byScore?: Record<string, number>;
+    withRecording?: number;
+    withTranscript?: number;
+    managerQueue?: number;
+  };
+  calls?: TelegramClientReportCallResponse[];
+};
+
+function normalizeString(
+  source: Record<string, unknown>,
+  key: string,
+): string {
+  const value = source[key];
+  return typeof value === "string" ? value : "";
+}
+
+function normalizeStringArray(
+  source: Record<string, unknown>,
+  key: string,
+): string[] {
+  const value = source[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function normalizeInterest(source: TelegramClientReportCallResponse): {
+  score: number;
+  label: string;
+  reason: string;
+  action: string;
+} {
+  const interest = source.interest;
+  return {
+    score: typeof interest?.score === "number" ? interest.score : -1,
+    label: typeof interest?.label === "string" ? interest.label : "нет оценки",
+    reason: typeof interest?.reason === "string" ? interest.reason : "",
+    action: typeof interest?.action === "string" ? interest.action : "",
+  };
+}
 
 export type TelegramClientState = {
   tenantId: string;
@@ -115,6 +176,28 @@ export type TelegramClientState = {
   }>;
 };
 
+export type TelegramCallReport = {
+  tenantId: string;
+  generatedAt: string;
+  summary: {
+    total: number;
+    byScore: Record<string, number>;
+    withRecording: number;
+    withTranscript: number;
+    managerQueue: number;
+  };
+  calls: Array<TelegramClientState["recentCalls"][number] & {
+    interest: {
+      score: number;
+      label: string;
+      reason: string;
+      action: string;
+    };
+    summary: string;
+    actionItems: string[];
+  }>;
+};
+
 export type StartCampaignResult = {
   ok: boolean;
   total: number;
@@ -128,6 +211,7 @@ export class ApiClient {
   private readonly authLinkPath: string;
   private readonly bindByCodePath: string;
   private readonly telegramClientStatePath: string;
+  private readonly telegramClientReportPath: string;
   private readonly telegramClientVoicePath: string;
   private readonly telegramClientCampaignPath: string;
   private readonly timeoutMs: number;
@@ -141,6 +225,8 @@ export class ApiClient {
       options.bindByCodePath ?? "/api/telegram/auth/bind-by-code";
     this.telegramClientStatePath =
       options.telegramClientStatePath ?? "/api/telegram/client/state";
+    this.telegramClientReportPath =
+      options.telegramClientReportPath ?? "/api/telegram/client/report";
     this.telegramClientVoicePath =
       options.telegramClientVoicePath ?? "/api/telegram/client/agent/voice";
     this.telegramClientCampaignPath =
@@ -273,6 +359,64 @@ export class ApiClient {
             typeof message.sequenceNo === "number" ? message.sequenceNo : 0,
           createdAt: message.createdAt ?? "",
         })),
+      })),
+    };
+  }
+
+  async getCallReport(
+    telegramUserId: number,
+    limit = 100,
+  ): Promise<TelegramCallReport | null> {
+    const query = new URLSearchParams({
+      telegram_user_id: String(telegramUserId),
+      limit: String(limit),
+    });
+
+    const payload = await this.request<TelegramClientReportResponse>(
+      `${this.telegramClientReportPath}?${query.toString()}`,
+      {
+        method: "GET",
+        headers: this.buildServiceHeaders(),
+      },
+    );
+
+    if (!payload?.tenantId || !payload.summary) {
+      return null;
+    }
+
+    return {
+      tenantId: payload.tenantId,
+      generatedAt: payload.generatedAt ?? new Date().toISOString(),
+      summary: {
+        total: payload.summary.total ?? 0,
+        byScore: payload.summary.byScore ?? {},
+        withRecording: payload.summary.withRecording ?? 0,
+        withTranscript: payload.summary.withTranscript ?? 0,
+        managerQueue: payload.summary.managerQueue ?? 0,
+      },
+      calls: (payload.calls ?? []).map((item) => ({
+        id: item.id ?? "",
+        status: item.status ?? "",
+        direction: item.direction ?? "",
+        callerPhone: item.callerPhone ?? "",
+        calleePhone: item.calleePhone ?? "",
+        startedAt: item.startedAt ?? "",
+        endedAt: item.endedAt ?? "",
+        durationSec:
+          typeof item.durationSec === "number" ? item.durationSec : null,
+        recordingUrl: item.recordingUrl ?? null,
+        transcriptText: item.transcriptText ?? "",
+        messages: (item.messages ?? []).map((message) => ({
+          id: message.id ?? "",
+          role: message.role ?? "",
+          text: message.text ?? "",
+          sequenceNo:
+            typeof message.sequenceNo === "number" ? message.sequenceNo : 0,
+          createdAt: message.createdAt ?? "",
+        })),
+        interest: normalizeInterest(item),
+        summary: normalizeString(item, "summary"),
+        actionItems: normalizeStringArray(item, "actionItems"),
       })),
     };
   }

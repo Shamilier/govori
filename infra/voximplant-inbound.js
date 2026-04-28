@@ -20,6 +20,7 @@ const FUNCTIONS_URL = BACKEND_BASE_URL + "/api/voximplant/functions/execute";
 
 const DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
 const DEFAULT_VOICE = "Kore";
+const STARTUP_PROMPT = "Секунду.";
 const UUID_RE =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -174,6 +175,16 @@ function buildRuntimeInstructions(basePrompt) {
         prompt +
         "\n\nТелефонный формат: отвечай коротко (1-2 предложения), без длинных вступлений и списков."
     );
+}
+
+function sayStartupPrompt(call) {
+    try {
+        if (call && typeof call.say === "function") {
+            call.say(STARTUP_PROMPT, Language.RU_RUSSIAN_FEMALE);
+        }
+    } catch (error) {
+        Logger.write("⚠️ Startup prompt failed: " + error);
+    }
 }
 
 function resolveGeminiModel(config) {
@@ -387,6 +398,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
 
     call.answer();
     startCallRecording();
+    sayStartupPrompt(call);
 
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     Logger.write("📞 INBOUND CALL — GovorI v3.0 + Gemini Live");
@@ -475,6 +487,17 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
 
         var connectConfig = {
             responseModalities: ["AUDIO"],
+            realtimeInputConfig: {
+                automaticActivityDetection: {
+                    disabled: false,
+                    startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
+                    endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+                    prefixPaddingMs: 80,
+                    silenceDurationMs: 300,
+                },
+                activityHandling: "START_OF_ACTIVITY_INTERRUPTS",
+                turnCoverage: "TURN_INCLUDES_ONLY_ACTIVITY",
+            },
             thinkingConfig: { thinkingLevel: "minimal" },
             generationConfig: {
                 temperature: responseTemperature,
