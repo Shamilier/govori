@@ -6,7 +6,6 @@ const voximplantService = {
     assistant_name: "Agent",
     model: "gpt-4.1-mini",
   })),
-  getStartupGreetingAudio: vi.fn(() => Buffer.from("fake wav")),
   executeFunction: vi.fn(async () => ({ success: true })),
   ingestLog: vi.fn(async () => ({ ok: true, callId: "call-1" })),
 };
@@ -33,32 +32,6 @@ describe("Voximplant routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ assistant_name: "Agent" });
-
-    await app.close();
-  });
-
-  it("returns startup greeting audio", async () => {
-    process.env.DATABASE_URL ??=
-      "postgresql://postgres:postgres@localhost:5432/govori";
-    process.env.JWT_SECRET ??= "test-secret-test-secret";
-    process.env.ENCRYPTION_KEY ??= "test-encryption-key-123456";
-
-    const { registerVoximplantRoutes } =
-      await import("@/voximplant/voximplant.routes.js");
-
-    const app = Fastify();
-    await registerVoximplantRoutes(app, {
-      voximplantService: voximplantService as never,
-    });
-
-    const response = await app.inject({
-      method: "GET",
-      url: "/api/voximplant/static/avito-greeting.wav",
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.headers["content-type"]).toContain("audio/wav");
-    expect(response.body).toBe("fake wav");
 
     await app.close();
   });

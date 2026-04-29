@@ -1,6 +1,4 @@
 import crypto from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import type { Agent, MessageRole, Prisma, PrismaClient } from "@prisma/client";
 import type { ConversationService } from "@/calls/conversation.service.js";
 import type { IntegrationsService } from "@/integrations/integrations.service.js";
@@ -70,16 +68,6 @@ function clampNumber(
 
 const AUDIO_TTL_SEC = 120;
 const AUDIO_KEY_PREFIX = "vox:audio:";
-const STARTUP_GREETING_AUDIO_NAME = "avito-greeting.wav";
-
-function resolveStaticAudioPath(fileName: string): string | null {
-  const candidates = [
-    resolve(process.cwd(), "apps/api/public/audio", fileName),
-    resolve(process.cwd(), "public/audio", fileName),
-  ];
-
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
 
 export class VoximplantService {
   constructor(
@@ -185,14 +173,20 @@ export class VoximplantService {
       assistantId: input.assistant_id,
     });
     const tenantId = phoneNumber?.tenantId ?? (await this.getDefaultTenantId());
+    const agent = await this.resolveAgentForTenant({
+      tenantId,
+      preferredAgentId: phoneNumber?.agentId,
+    });
     const integrations =
       await this.integrationsService.getDecryptedForTenant(tenantId);
 
     const result = await this.ttsProvider.synthesize({
       text: input.text,
-      voiceId: input.voice_id,
-      speed: input.speed,
-      language: input.language,
+      voiceId:
+        input.voice_id ?? agent.ttsVoiceId ?? integrations.gemini.ttsVoice,
+      speed: input.speed ?? Number(agent.ttsSpeed ?? 1),
+      language: input.language ?? agent.language,
+      sampleRate: agent.ttsSampleRate,
       apiKey: integrations.gemini.apiKey,
       modelId: integrations.gemini.ttsModel,
     });
@@ -221,15 +215,6 @@ export class VoximplantService {
       return null;
     }
     return Buffer.from(data, "base64");
-  }
-
-  getStartupGreetingAudio(): Buffer | null {
-    const audioPath = resolveStaticAudioPath(STARTUP_GREETING_AUDIO_NAME);
-    if (!audioPath) {
-      return null;
-    }
-
-    return readFileSync(audioPath);
   }
 
   async getAssistantConfig(
@@ -271,6 +256,7 @@ export class VoximplantService {
       chat_model: integrations.gemini.llmModel,
       prompt: agent.systemPrompt,
       hello: agent.greetingText,
+      startup_greeting_text: agent.greetingText,
       google_sheet_id: null,
       tts_endpoint: `${baseUrl}/api/voximplant/synthesize`,
       tts_audio_base_url: `${baseUrl}/api/voximplant/audio`,
