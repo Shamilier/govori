@@ -67,6 +67,14 @@ function normalizeNonEmpty(value: string | undefined): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+function normalizeGeminiModel(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  if (!normalized || !/^gemini-/i.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
 function nextSecret(
   input: string | undefined,
   previousEncrypted: string | null,
@@ -169,10 +177,9 @@ export class IntegrationsService {
       env.LLM_MODEL;
 
     const ttsModel =
-      readString(params.cartesia, "modelId") ??
-      fallback?.ttsModel ??
-      env.GEMINI_TTS_MODEL ??
-      env.CARTESIA_MODEL_ID;
+      normalizeGeminiModel(readString(params.cartesia, "modelId")) ??
+      normalizeGeminiModel(fallback?.ttsModel) ??
+      env.GEMINI_TTS_MODEL;
 
     const ttsVoice =
       readString(params.cartesia, "voiceId") ??

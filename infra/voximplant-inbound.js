@@ -249,7 +249,6 @@ async function synthesizeStartupGreeting(config, assistantId, startupGreetingTex
 
 function playStartupGreeting(call, greetingAudio, startupGreetingText, onFinished) {
     var finished = false;
-    var greetingText = startupGreetingText || FALLBACK_STARTUP_GREETING_TEXT;
     var maxWaitMs = STARTUP_GREETING_MAX_WAIT_MS;
 
     function finish() {
@@ -296,12 +295,7 @@ function playStartupGreeting(call, greetingAudio, startupGreetingText, onFinishe
             return true;
         }
 
-        if (call && typeof call.say === "function") {
-            Logger.write("⚠️ Startup greeting uses fallback Voximplant TTS");
-            call.say(greetingText, Language.RU_RUSSIAN_FEMALE);
-            setTimeout(finish, maxWaitMs);
-            return true;
-        }
+        Logger.write("⚠️ No synthesized startup greeting; Gemini will greet");
     } catch (error) {
         Logger.write("⚠️ Startup greeting failed: " + error);
     }
@@ -356,7 +350,7 @@ function resolveGeminiVoice(config) {
     }
 
     // Old Cartesia voice IDs may leak from backend config; Gemini expects prebuilt names.
-    if (UUID_RE.test(raw)) {
+    if (UUID_RE.test(raw) || raw.charAt(0) === "+") {
         return DEFAULT_VOICE;
     }
 
@@ -490,12 +484,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
     }
 
     function maybeBridgeAudio(config) {
-        if (
-            mediaBridged ||
-            !geminiSetupComplete ||
-            !startupGreetingFinished ||
-            !geminiClient
-        ) {
+        if (mediaBridged || !geminiSetupComplete || !geminiClient) {
             return;
         }
 
