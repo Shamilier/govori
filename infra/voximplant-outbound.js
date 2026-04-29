@@ -25,7 +25,11 @@ const FUNCTIONS_URL = BACKEND_BASE_URL + "/api/voximplant/functions/execute";
 
 const DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
 const DEFAULT_VOICE = "Kore";
-const STARTUP_PROMPT = "Секунду.";
+const STARTUP_GREETING_TEXT =
+    "Здравствуйте, это Ника из Авито продвижения. Есть минутка?";
+const STARTUP_GREETING_URL =
+    BACKEND_BASE_URL + "/api/voximplant/static/avito-greeting.wav?v=20260428-1";
+const STARTUP_GREETING_MAX_WAIT_MS = 5500;
 const UUID_RE =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -139,18 +143,66 @@ function buildRuntimeInstructions(basePrompt) {
     var prompt = (basePrompt || "Ты голосовой AI-агент.").trim();
     return (
         prompt +
+        "\n\nСтартовая фраза уже произнесена готовой аудиозаписью: \"" +
+        STARTUP_GREETING_TEXT +
+        "\". Не повторяй приветствие; если абонент ответил, сразу продолжай разговор по сути." +
         "\n\nТелефонный формат: отвечай коротко (1-2 предложения), без длинных вступлений и списков."
     );
 }
 
-function sayStartupPrompt(call) {
+function playStartupGreeting(call, onFinished) {
+    var finished = false;
+
+    function finish() {
+        if (finished) {
+            return;
+        }
+        finished = true;
+        if (typeof onFinished === "function") {
+            onFinished();
+        }
+    }
+
     try {
+        if (call && typeof call.startPlayback === "function") {
+            var playbackFinishedEvent =
+                typeof CallEvents !== "undefined" ? CallEvents.PlaybackFinished : null;
+            var playbackFinishedHandler = function() {
+                Logger.write("✅ Startup greeting playback finished");
+                if (
+                    playbackFinishedEvent &&
+                    typeof call.removeEventListener === "function"
+                ) {
+                    call.removeEventListener(
+                        playbackFinishedEvent,
+                        playbackFinishedHandler
+                    );
+                }
+                finish();
+            };
+
+            if (playbackFinishedEvent && typeof call.addEventListener === "function") {
+                call.addEventListener(playbackFinishedEvent, playbackFinishedHandler);
+            }
+
+            call.startPlayback(STARTUP_GREETING_URL, {
+                progressivePlayback: true,
+            });
+            setTimeout(finish, STARTUP_GREETING_MAX_WAIT_MS);
+            return true;
+        }
+
         if (call && typeof call.say === "function") {
-            call.say(STARTUP_PROMPT, Language.RU_RUSSIAN_FEMALE);
+            call.say(STARTUP_GREETING_TEXT, Language.RU_RUSSIAN_FEMALE);
+            setTimeout(finish, STARTUP_GREETING_MAX_WAIT_MS);
+            return true;
         }
     } catch (error) {
-        Logger.write("⚠️ Startup prompt failed: " + error);
+        Logger.write("⚠️ Startup greeting failed: " + error);
     }
+
+    finish();
+    return false;
 }
 
 function resolveGeminiModel(config) {
@@ -207,6 +259,7 @@ async function runGeminiSession(params) {
     var destinationNumber = params.destinationNumber;
     var callerNumber = params.callerNumber || call.callerid() || "unknown";
     var assistantId = params.assistantId || destinationNumber || FALLBACK_ASSISTANT_ID;
+    var configResponsePromise = params.configResponsePromise;
     var callId = call.id();
     var chatId = "vox_" + Math.random().toString(36).substring(2, 15);
 
@@ -224,6 +277,10 @@ async function runGeminiSession(params) {
     var lastFunctionResult = null;
     var conversationPairCount = 0;
     var recordingUrl = "";
+    var startupGreetingPlayed = false;
+    var startupGreetingFinished = true;
+    var geminiSetupComplete = false;
+    var mediaBridged = false;
 
     function scheduleHangup(delayMs) {
         if (hangupScheduled) {
@@ -321,6 +378,35 @@ async function runGeminiSession(params) {
         lastFunctionResult = null;
     }
 
+    function maybeBridgeAudio(config) {
+        if (
+            mediaBridged ||
+            !geminiSetupComplete ||
+            !startupGreetingFinished ||
+            !geminiClient
+        ) {
+            return;
+        }
+
+        mediaBridged = true;
+        Logger.write("✅ Bridging call audio to Gemini");
+        VoxEngine.sendMediaBetween(call, geminiClient);
+
+        if (
+            !startupGreetingPlayed &&
+            config &&
+            config.hello &&
+            String(config.hello).trim().length > 0
+        ) {
+            geminiClient.sendRealtimeInput({
+                text:
+                    "Поздоровайся с абонентом дословно так: \"" +
+                    String(config.hello).trim() +
+                    "\".",
+            });
+        }
+    }
+
     function onCallEnd() {
         if (isTerminating) {
             return;
@@ -365,14 +451,31 @@ async function runGeminiSession(params) {
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     try {
-        sayStartupPrompt(call);
         startCallRecording();
+        startupGreetingFinished = false;
+        startupGreetingPlayed = playStartupGreeting(call, function() {
+            startupGreetingFinished = true;
+            maybeBridgeAudio(config);
+        });
+        if (!startupGreetingPlayed) {
+            startupGreetingFinished = true;
+        } else {
+            sendLogToBackend({
+                type: "startup_greeting",
+                data: {
+                    assistant_message: STARTUP_GREETING_TEXT,
+                    direction: "outbound",
+                },
+            });
+        }
 
         Logger.write("🔄 Loading config from backend...");
-        var configResponse = await Net.httpRequestAsync(configUrl, {
-            headers: buildHeaders(),
-            method: "GET",
-        });
+        var configResponse = configResponsePromise
+            ? await configResponsePromise
+            : await Net.httpRequestAsync(configUrl, {
+                  headers: buildHeaders(),
+                  method: "GET",
+              });
 
         if (configResponse.code !== 200) {
             Logger.write(
@@ -470,17 +573,9 @@ async function runGeminiSession(params) {
         Logger.write("✅ Gemini connected, model: " + model + ", voice: " + voiceName);
 
         geminiClient.addEventListener(Gemini.LiveAPIEvents.SetupComplete, function() {
-            Logger.write("✅ Gemini setup complete — bridging audio");
-            VoxEngine.sendMediaBetween(call, geminiClient);
-
-            if (config.hello && String(config.hello).trim().length > 0) {
-                geminiClient.sendRealtimeInput({
-                    text:
-                        "Поздоровайся с абонентом дословно так: \"" +
-                        String(config.hello).trim() +
-                        "\".",
-                });
-            }
+            Logger.write("✅ Gemini setup complete");
+            geminiSetupComplete = true;
+            maybeBridgeAudio(config);
         });
 
         geminiClient.addEventListener(
@@ -719,6 +814,15 @@ VoxEngine.addEventListener(AppEvents.Started, function() {
     Logger.write("   assistant_id: " + assistantId);
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
+    var configUrl =
+        BACKEND_BASE_URL +
+        "/api/voximplant/assistants/config/" +
+        encodeURIComponent(assistantId);
+    var configResponsePromise = Net.httpRequestAsync(configUrl, {
+        headers: buildHeaders(),
+        method: "GET",
+    });
+
     var pstnCall = from ? VoxEngine.callPSTN(to, from) : VoxEngine.callPSTN(to);
 
     pstnCall.addEventListener(CallEvents.Connected, function() {
@@ -728,6 +832,7 @@ VoxEngine.addEventListener(AppEvents.Started, function() {
             destinationNumber: to,
             callerNumber: from || pstnCall.callerid() || "unknown",
             assistantId: assistantId,
+            configResponsePromise: configResponsePromise,
         });
     });
 

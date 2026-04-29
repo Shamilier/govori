@@ -106,4 +106,20 @@ export async function registerVoximplantRoutes(
       .header("Cache-Control", "no-store")
       .send(audio);
   });
+
+  app.get(
+    "/api/voximplant/static/avito-greeting.wav",
+    async (_request, reply) => {
+      const audio = deps.voximplantService.getStartupGreetingAudio();
+      if (!audio) {
+        return reply.code(404).send({ error: "AUDIO_NOT_FOUND" });
+      }
+
+      return reply
+        .header("Content-Type", "audio/wav")
+        .header("Content-Length", audio.length)
+        .header("Cache-Control", "public, max-age=3600")
+        .send(audio);
+    },
+  );
 }

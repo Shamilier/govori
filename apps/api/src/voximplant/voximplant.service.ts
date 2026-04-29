@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Agent, MessageRole, Prisma, PrismaClient } from "@prisma/client";
 import type { ConversationService } from "@/calls/conversation.service.js";
 import type { IntegrationsService } from "@/integrations/integrations.service.js";
@@ -68,6 +70,16 @@ function clampNumber(
 
 const AUDIO_TTL_SEC = 120;
 const AUDIO_KEY_PREFIX = "vox:audio:";
+const STARTUP_GREETING_AUDIO_NAME = "avito-greeting.wav";
+
+function resolveStaticAudioPath(fileName: string): string | null {
+  const candidates = [
+    resolve(process.cwd(), "apps/api/public/audio", fileName),
+    resolve(process.cwd(), "public/audio", fileName),
+  ];
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
 
 export class VoximplantService {
   constructor(
@@ -209,6 +221,15 @@ export class VoximplantService {
       return null;
     }
     return Buffer.from(data, "base64");
+  }
+
+  getStartupGreetingAudio(): Buffer | null {
+    const audioPath = resolveStaticAudioPath(STARTUP_GREETING_AUDIO_NAME);
+    if (!audioPath) {
+      return null;
+    }
+
+    return readFileSync(audioPath);
   }
 
   async getAssistantConfig(
