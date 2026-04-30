@@ -20,8 +20,8 @@ const empty = {
   maxTurns: 20,
   responseTemperature: 0.3,
   responseMaxTokens: 250,
-  ttsProvider: "gemini",
-  ttsVoiceId: "Kore",
+  ttsProvider: "elevenlabs",
+  ttsVoiceId: "JBFqnCBsd6RMkjVDRZzb",
   ttsSpeed: 1,
   ttsSampleRate: 8000,
   sttProvider: "gemini",
@@ -224,6 +224,7 @@ export default function AgentPage() {
                       onChange={(event) =>
                         setForm({ ...form, ttsVoiceId: event.target.value })
                       }
+                      placeholder="Например: JBFqnCBsd6RMkjVDRZzb"
                     />
                   </div>
                   <div className="grid-tight">

@@ -1,6 +1,7 @@
 import type { Agent, PrismaClient } from "@prisma/client";
 import type { AuditService } from "@/audit/audit.service.js";
 import type { UpdateAgentInput } from "@/agent/agent.schemas.js";
+import { env } from "@/common/env.js";
 import { toNumber } from "@/common/number.js";
 import type { TtsProvider } from "@/providers/types.js";
 import type { ConversationService } from "@/calls/conversation.service.js";
@@ -50,7 +51,9 @@ export class AgentService {
         fallbackText: "Извините, повторите, пожалуйста.",
         goodbyeText: "Спасибо за звонок. До свидания!",
         language: "ru-RU",
-        ttsVoiceId: "Kore",
+        ttsProvider: env.TTS_PROVIDER.trim().toLowerCase(),
+        ttsVoiceId:
+          env.ELEVENLABS_VOICE_ID ?? env.GEMINI_TTS_VOICE ?? "Kore",
       },
     });
   }

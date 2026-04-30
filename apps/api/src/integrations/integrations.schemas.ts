@@ -13,6 +13,9 @@ export const integrationsUpdateSchema = z.object({
   geminiTtsModel: z.string().optional(),
   geminiTtsVoice: z.string().optional(),
   geminiSttModel: z.string().optional(),
+  elevenlabsApiKey: z.string().optional(),
+  elevenlabsVoiceId: z.string().optional(),
+  elevenlabsModelId: z.string().optional(),
   // Legacy fields kept for compatibility with old frontend payloads.
   cartesiaApiKey: z.string().optional(),
   cartesiaVoiceId: z.string().optional(),

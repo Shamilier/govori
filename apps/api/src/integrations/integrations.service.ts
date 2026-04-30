@@ -33,6 +33,7 @@ export type DecryptedIntegrationSettings = {
     model: string;
   };
   tts: {
+    provider: string;
     apiKey: string | null;
     modelId: string;
     voiceId: string;
@@ -75,6 +76,14 @@ function normalizeGeminiModel(value: string | null | undefined): string | null {
   return normalized;
 }
 
+function normalizeElevenLabsModel(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  if (!normalized || !/^eleven_/i.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
 function nextSecret(
   input: string | undefined,
   previousEncrypted: string | null,
@@ -100,12 +109,11 @@ function nextSecret(
 }
 
 function pickSharedGeminiSecret(input: IntegrationsUpdateInput): string | undefined {
-  return (
-    input.geminiApiKey ??
-    input.llmApiKey ??
-    input.cartesiaApiKey ??
-    input.sttApiKey
-  );
+  return input.geminiApiKey ?? input.llmApiKey ?? input.sttApiKey;
+}
+
+function pickSharedTtsSecret(input: IntegrationsUpdateInput): string | undefined {
+  return input.elevenlabsApiKey ?? input.cartesiaApiKey;
 }
 
 export class IntegrationsService {
@@ -132,17 +140,18 @@ export class IntegrationsService {
       ttsVoice: string;
       sttModel: string;
     };
+    tts: {
+      provider: string;
+      apiKey: string | null;
+      modelId: string;
+      voiceId: string;
+    };
   }): DecryptedIntegrationSettings {
     return {
       ...base,
       llm: {
         apiKey: base.gemini.apiKey,
         model: base.gemini.llmModel,
-      },
-      tts: {
-        apiKey: base.gemini.apiKey,
-        modelId: base.gemini.ttsModel,
-        voiceId: base.gemini.ttsVoice,
       },
       stt: {
         apiKey: base.gemini.apiKey,
@@ -158,15 +167,19 @@ export class IntegrationsService {
     fallback?: DecryptedIntegrationSettings["gemini"];
   }): DecryptedIntegrationSettings["gemini"] {
     const fallback = params.fallback;
+    const useLegacyTtsSecret =
+      env.TTS_PROVIDER.trim().toLowerCase() !== "elevenlabs";
 
     const apiKey =
       decryptNullable(readString(params.llm, "apiKeyEnc")) ??
-      decryptNullable(readString(params.cartesia, "apiKeyEnc")) ??
+      (useLegacyTtsSecret
+        ? decryptNullable(readString(params.cartesia, "apiKeyEnc"))
+        : null) ??
       decryptNullable(readString(params.stt, "apiKeyEnc")) ??
       fallback?.apiKey ??
       env.GEMINI_API_KEY ??
       env.LLM_API_KEY ??
-      env.CARTESIA_API_KEY ??
+      (useLegacyTtsSecret ? env.CARTESIA_API_KEY : null) ??
       env.STT_API_KEY ??
       null;
 
@@ -177,15 +190,17 @@ export class IntegrationsService {
       env.LLM_MODEL;
 
     const ttsModel =
-      normalizeGeminiModel(readString(params.cartesia, "modelId")) ??
+      (useLegacyTtsSecret
+        ? normalizeGeminiModel(readString(params.cartesia, "modelId"))
+        : null) ??
       normalizeGeminiModel(fallback?.ttsModel) ??
       env.GEMINI_TTS_MODEL;
 
     const ttsVoice =
-      readString(params.cartesia, "voiceId") ??
+      (useLegacyTtsSecret ? readString(params.cartesia, "voiceId") : null) ??
       fallback?.ttsVoice ??
       env.GEMINI_TTS_VOICE ??
-      env.CARTESIA_VOICE_ID ??
+      (useLegacyTtsSecret ? env.CARTESIA_VOICE_ID : null) ??
       "Kore";
 
     const sttModel =
@@ -199,6 +214,53 @@ export class IntegrationsService {
       ttsModel,
       ttsVoice,
       sttModel,
+    };
+  }
+
+  private buildTtsConfig(params: {
+    cartesia: Record<string, unknown>;
+    fallback?: DecryptedIntegrationSettings["tts"];
+  }): DecryptedIntegrationSettings["tts"] {
+    const fallback = params.fallback;
+    const provider = env.TTS_PROVIDER.trim().toLowerCase();
+
+    if (provider === "elevenlabs") {
+      return {
+        provider,
+        apiKey:
+          decryptNullable(readString(params.cartesia, "apiKeyEnc")) ??
+          fallback?.apiKey ??
+          env.ELEVENLABS_API_KEY ??
+          null,
+        modelId:
+          normalizeElevenLabsModel(readString(params.cartesia, "modelId")) ??
+          normalizeElevenLabsModel(fallback?.modelId) ??
+          env.ELEVENLABS_MODEL_ID,
+        voiceId:
+          readString(params.cartesia, "voiceId") ??
+          fallback?.voiceId ??
+          env.ELEVENLABS_VOICE_ID ??
+          "JBFqnCBsd6RMkjVDRZzb",
+      };
+    }
+
+    return {
+      provider,
+      apiKey:
+        decryptNullable(readString(params.cartesia, "apiKeyEnc")) ??
+        fallback?.apiKey ??
+        env.GEMINI_API_KEY ??
+        env.CARTESIA_API_KEY ??
+        null,
+      modelId:
+        normalizeGeminiModel(readString(params.cartesia, "modelId")) ??
+        normalizeGeminiModel(fallback?.modelId) ??
+        env.GEMINI_TTS_MODEL,
+      voiceId:
+        readString(params.cartesia, "voiceId") ??
+        fallback?.voiceId ??
+        env.GEMINI_TTS_VOICE ??
+        "Kore",
     };
   }
 
@@ -234,10 +296,14 @@ export class IntegrationsService {
       geminiTtsModel: decrypted.gemini.ttsModel,
       geminiTtsVoice: decrypted.gemini.ttsVoice,
       geminiSttModel: decrypted.gemini.sttModel,
+      ttsProvider: decrypted.tts.provider,
+      elevenlabsApiKey: maskValue(decrypted.tts.apiKey),
+      elevenlabsVoiceId: decrypted.tts.voiceId,
+      elevenlabsModelId: decrypted.tts.modelId,
       // Legacy aliases for old UI payloads.
-      cartesiaApiKey: maskValue(decrypted.gemini.apiKey),
-      cartesiaVoiceId: decrypted.gemini.ttsVoice,
-      cartesiaModelId: decrypted.gemini.ttsModel,
+      cartesiaApiKey: maskValue(decrypted.tts.apiKey),
+      cartesiaVoiceId: decrypted.tts.voiceId,
+      cartesiaModelId: decrypted.tts.modelId,
       llmApiKey: maskValue(decrypted.gemini.apiKey),
       llmModel: decrypted.gemini.llmModel,
       sttApiKey: maskValue(decrypted.gemini.apiKey),
@@ -258,6 +324,7 @@ export class IntegrationsService {
       cartesia,
       stt,
     });
+    const tts = this.buildTtsConfig({ cartesia });
 
     return this.withAliases({
       id: settings.id,
@@ -286,6 +353,7 @@ export class IntegrationsService {
           null,
       },
       gemini,
+      tts,
     });
   }
 
@@ -314,6 +382,10 @@ export class IntegrationsService {
       stt: params.stt,
       fallback: params.fallback.gemini,
     });
+    const tts = this.buildTtsConfig({
+      cartesia: params.cartesia,
+      fallback: params.fallback.tts,
+    });
 
     return this.withAliases({
       id: params.id,
@@ -338,6 +410,7 @@ export class IntegrationsService {
           params.fallback.voximplant.outboundRuleId,
       },
       gemini,
+      tts,
     });
   }
 
@@ -394,9 +467,13 @@ export class IntegrationsService {
       geminiTtsModel: decrypted.gemini.ttsModel,
       geminiTtsVoice: decrypted.gemini.ttsVoice,
       geminiSttModel: decrypted.gemini.sttModel,
-      cartesiaApiKey: maskValue(decrypted.gemini.apiKey),
-      cartesiaVoiceId: decrypted.gemini.ttsVoice,
-      cartesiaModelId: decrypted.gemini.ttsModel,
+      ttsProvider: decrypted.tts.provider,
+      elevenlabsApiKey: maskValue(decrypted.tts.apiKey),
+      elevenlabsVoiceId: decrypted.tts.voiceId,
+      elevenlabsModelId: decrypted.tts.modelId,
+      cartesiaApiKey: maskValue(decrypted.tts.apiKey),
+      cartesiaVoiceId: decrypted.tts.voiceId,
+      cartesiaModelId: decrypted.tts.modelId,
       llmApiKey: maskValue(decrypted.gemini.apiKey),
       llmModel: decrypted.gemini.llmModel,
       sttApiKey: maskValue(decrypted.gemini.apiKey),
@@ -427,6 +504,7 @@ export class IntegrationsService {
     const prevStt = jsonObject(existing?.sttConfig ?? {});
 
     const sharedGeminiSecret = pickSharedGeminiSecret(input);
+    const sharedTtsSecret = pickSharedTtsSecret(input);
 
     const nextVox = {
       applicationId:
@@ -456,15 +534,25 @@ export class IntegrationsService {
       readString(prevLlm, "model") ??
       fallback.gemini.llmModel;
 
-    const nextGeminiTtsModel =
-      normalizeNonEmpty(input.geminiTtsModel ?? input.cartesiaModelId ?? undefined) ??
+    const nextTtsModel =
+      normalizeNonEmpty(
+        input.elevenlabsModelId ??
+          input.geminiTtsModel ??
+          input.cartesiaModelId ??
+          undefined,
+      ) ??
       readString(prevCartesia, "modelId") ??
-      fallback.gemini.ttsModel;
+      fallback.tts.modelId;
 
-    const nextGeminiTtsVoice =
-      normalizeNonEmpty(input.geminiTtsVoice ?? input.cartesiaVoiceId ?? undefined) ??
+    const nextTtsVoice =
+      normalizeNonEmpty(
+        input.elevenlabsVoiceId ??
+          input.geminiTtsVoice ??
+          input.cartesiaVoiceId ??
+          undefined,
+      ) ??
       readString(prevCartesia, "voiceId") ??
-      fallback.gemini.ttsVoice;
+      fallback.tts.voiceId;
 
     const nextGeminiSttModel =
       normalizeNonEmpty(input.geminiSttModel) ??
@@ -473,11 +561,11 @@ export class IntegrationsService {
 
     const nextCartesia = {
       apiKeyEnc: nextSecret(
-        sharedGeminiSecret,
+        sharedTtsSecret,
         readString(prevCartesia, "apiKeyEnc"),
       ),
-      voiceId: nextGeminiTtsVoice,
-      modelId: nextGeminiTtsModel,
+      voiceId: nextTtsVoice,
+      modelId: nextTtsModel,
     };
 
     const nextLlm = {
@@ -519,6 +607,7 @@ export class IntegrationsService {
           input.voximplantApiKey ? "voximplantApiKey" : null,
           input.voximplantApiSecret ? "voximplantApiSecret" : null,
           sharedGeminiSecret ? "geminiApiKey" : null,
+          sharedTtsSecret ? "elevenlabsApiKey" : null,
         ].filter(Boolean),
       },
     });
@@ -537,6 +626,7 @@ export class IntegrationsService {
     const prevStt = jsonObject(existing.sttConfig);
 
     const sharedGeminiSecret = pickSharedGeminiSecret(input);
+    const sharedTtsSecret = pickSharedTtsSecret(input);
 
     const nextVox = {
       applicationId:
@@ -566,17 +656,29 @@ export class IntegrationsService {
       env.GEMINI_LLM_MODEL ??
       env.LLM_MODEL;
 
-    const nextGeminiTtsModel =
-      normalizeNonEmpty(input.geminiTtsModel ?? input.cartesiaModelId ?? undefined) ??
+    const nextTtsModel =
+      normalizeNonEmpty(
+        input.elevenlabsModelId ??
+          input.geminiTtsModel ??
+          input.cartesiaModelId ??
+          undefined,
+      ) ??
       readString(prevCartesia, "modelId") ??
-      env.GEMINI_TTS_MODEL ??
-      env.CARTESIA_MODEL_ID;
+      (env.TTS_PROVIDER.trim().toLowerCase() === "elevenlabs"
+        ? env.ELEVENLABS_MODEL_ID
+        : env.GEMINI_TTS_MODEL);
 
-    const nextGeminiTtsVoice =
-      normalizeNonEmpty(input.geminiTtsVoice ?? input.cartesiaVoiceId ?? undefined) ??
+    const nextTtsVoice =
+      normalizeNonEmpty(
+        input.elevenlabsVoiceId ??
+          input.geminiTtsVoice ??
+          input.cartesiaVoiceId ??
+          undefined,
+      ) ??
       readString(prevCartesia, "voiceId") ??
-      env.GEMINI_TTS_VOICE ??
-      env.CARTESIA_VOICE_ID ??
+      (env.TTS_PROVIDER.trim().toLowerCase() === "elevenlabs"
+        ? env.ELEVENLABS_VOICE_ID
+        : env.GEMINI_TTS_VOICE) ??
       "Kore";
 
     const nextGeminiSttModel =
@@ -586,11 +688,11 @@ export class IntegrationsService {
 
     const nextCartesia = {
       apiKeyEnc: nextSecret(
-        sharedGeminiSecret,
+        sharedTtsSecret,
         readString(prevCartesia, "apiKeyEnc"),
       ),
-      voiceId: nextGeminiTtsVoice,
-      modelId: nextGeminiTtsModel,
+      voiceId: nextTtsVoice,
+      modelId: nextTtsModel,
     };
 
     const nextLlm = {
@@ -625,6 +727,7 @@ export class IntegrationsService {
           input.voximplantApiKey ? "voximplantApiKey" : null,
           input.voximplantApiSecret ? "voximplantApiSecret" : null,
           sharedGeminiSecret ? "geminiApiKey" : null,
+          sharedTtsSecret ? "elevenlabsApiKey" : null,
         ].filter(Boolean),
       },
     });

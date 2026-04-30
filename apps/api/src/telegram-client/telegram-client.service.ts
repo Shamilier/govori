@@ -594,7 +594,9 @@ export class TelegramClientService {
         fallbackText: "Извините, повторите, пожалуйста.",
         goodbyeText: "Спасибо за звонок. До свидания!",
         language: "ru-RU",
-        ttsVoiceId: "Kore",
+        ttsProvider: env.TTS_PROVIDER.trim().toLowerCase(),
+        ttsVoiceId:
+          env.ELEVENLABS_VOICE_ID ?? env.GEMINI_TTS_VOICE ?? "Kore",
       },
     });
   }

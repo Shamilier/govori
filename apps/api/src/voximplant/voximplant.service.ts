@@ -182,13 +182,12 @@ export class VoximplantService {
 
     const result = await this.ttsProvider.synthesize({
       text: input.text,
-      voiceId:
-        input.voice_id ?? agent.ttsVoiceId ?? integrations.gemini.ttsVoice,
+      voiceId: input.voice_id ?? agent.ttsVoiceId ?? integrations.tts.voiceId,
       speed: input.speed ?? Number(agent.ttsSpeed ?? 1),
       language: input.language ?? agent.language,
       sampleRate: agent.ttsSampleRate,
-      apiKey: integrations.gemini.apiKey,
-      modelId: integrations.gemini.ttsModel,
+      apiKey: integrations.tts.apiKey,
+      modelId: integrations.tts.modelId,
     });
 
     const audioId = crypto.randomUUID();
@@ -258,10 +257,17 @@ export class VoximplantService {
       hello: agent.greetingText,
       startup_greeting_text: agent.greetingText,
       google_sheet_id: null,
+      tts_provider: integrations.tts.provider,
       tts_endpoint: `${baseUrl}/api/voximplant/synthesize`,
       tts_audio_base_url: `${baseUrl}/api/voximplant/audio`,
       voice_config: {
-        voice_id: agent.ttsVoiceId ?? integrations.gemini.ttsVoice ?? env.GEMINI_TTS_VOICE ?? null,
+        provider: integrations.tts.provider,
+        voice_id:
+          agent.ttsVoiceId ??
+          integrations.tts.voiceId ??
+          env.ELEVENLABS_VOICE_ID ??
+          env.GEMINI_TTS_VOICE ??
+          null,
         speed: agent.ttsSpeed ?? 1,
         language: agent.language ?? "ru",
       },

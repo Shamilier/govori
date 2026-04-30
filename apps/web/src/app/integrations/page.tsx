@@ -23,11 +23,15 @@ type IntegrationsForm = {
   voximplantApiKey: string;
   voximplantApiSecret: string;
   voximplantOutboundRuleId: string;
+  ttsProvider: string;
   geminiApiKey: string;
   geminiLlmModel: string;
   geminiTtsModel: string;
   geminiTtsVoice: string;
   geminiSttModel: string;
+  elevenlabsApiKey: string;
+  elevenlabsVoiceId: string;
+  elevenlabsModelId: string;
 };
 
 type IntegrationsResponse = Partial<IntegrationsForm> & {
@@ -42,11 +46,15 @@ const empty: IntegrationsForm = {
   voximplantApiKey: "",
   voximplantApiSecret: "",
   voximplantOutboundRuleId: "",
+  ttsProvider: "elevenlabs",
   geminiApiKey: "",
   geminiLlmModel: "gemini-2.5-flash",
   geminiTtsModel: "gemini-2.5-flash-preview-tts",
   geminiTtsVoice: "Kore",
   geminiSttModel: "gemini-2.5-flash",
+  elevenlabsApiKey: "",
+  elevenlabsVoiceId: "JBFqnCBsd6RMkjVDRZzb",
+  elevenlabsModelId: "eleven_flash_v2_5",
 };
 
 export default function IntegrationsPage() {
@@ -267,6 +275,15 @@ export default function IntegrationsPage() {
                 </div>
                 <div className="panel-body field-stack">
                   <div>
+                    <label>TTS provider</label>
+                    <input
+                      value={form.ttsProvider}
+                      onChange={(event) =>
+                        setForm({ ...form, ttsProvider: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
                     <label>Gemini API key</label>
                     <input
                       value={form.geminiApiKey}
@@ -309,6 +326,44 @@ export default function IntegrationsPage() {
                         value={form.geminiSttModel}
                         onChange={(event) =>
                           setForm({ ...form, geminiSttModel: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label>ElevenLabs API key</label>
+                    <input
+                      value={form.elevenlabsApiKey}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          elevenlabsApiKey: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="grid-tight">
+                    <div>
+                      <label>ElevenLabs voice ID</label>
+                      <input
+                        value={form.elevenlabsVoiceId}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            elevenlabsVoiceId: event.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>ElevenLabs model</label>
+                      <input
+                        value={form.elevenlabsModelId}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            elevenlabsModelId: event.target.value,
+                          })
                         }
                       />
                     </div>

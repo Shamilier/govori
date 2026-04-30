@@ -48,10 +48,11 @@ async function main() {
         goodbyeText: "Спасибо за звонок. Хорошего дня!",
         language: "ru-RU",
         tenantId: tenant.id,
-        ttsProvider: "gemini",
+        ttsProvider: process.env.TTS_PROVIDER ?? "elevenlabs",
         sttProvider: "gemini",
         llmProvider: "gemini",
         ttsVoiceId:
+          process.env.ELEVENLABS_VOICE_ID ??
           process.env.GEMINI_TTS_VOICE ??
           process.env.CARTESIA_VOICE_ID ??
           "Kore",

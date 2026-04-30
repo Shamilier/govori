@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { AuditService } from "@/audit/audit.service.js";
+import { env } from "@/common/env.js";
 import type { CrmService } from "@/crm/crm.service.js";
 import type { IntegrationsService } from "@/integrations/integrations.service.js";
 import type { ProvisionClientInput } from "@/onboarding/onboarding.schemas.js";
@@ -102,7 +103,7 @@ export class OnboardingService {
         goodbyeText: input.goodbyeText,
         language: input.language,
         ttsVoiceId: input.ttsVoiceId,
-        ttsProvider: "gemini",
+        ttsProvider: env.TTS_PROVIDER.trim().toLowerCase(),
         sttProvider: "gemini",
         llmProvider: "gemini",
       },

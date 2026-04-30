@@ -37,7 +37,12 @@ export const provisionClientSchema = z.object({
     .max(1000)
     .default("Спасибо за звонок. До свидания!"),
   language: z.string().trim().min(2).max(20).default("ru-RU"),
-  ttsVoiceId: z.string().trim().min(1).max(120).default("Kore"),
+  ttsVoiceId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .default("JBFqnCBsd6RMkjVDRZzb"),
   voximplant: z
     .object({
       applicationId: optionalTrimmedString,

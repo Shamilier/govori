@@ -24,6 +24,7 @@ const LOG_URL = BACKEND_BASE_URL + "/api/voximplant/log";
 const FUNCTIONS_URL = BACKEND_BASE_URL + "/api/voximplant/functions/execute";
 
 const DEFAULT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
+const DEFAULT_TEXT_MODEL = "gemini-3.1-flash-live-preview";
 const DEFAULT_VOICE = "Kore";
 const FALLBACK_STARTUP_GREETING_TEXT =
     "Здравствуйте! Это Ника из Авито продвижения. Есть минутка?";
@@ -149,6 +150,24 @@ function buildRuntimeInstructions(basePrompt, startupGreetingText) {
     );
 }
 
+function isExternalTtsMode(config) {
+    var provider =
+        config && typeof config.tts_provider === "string"
+            ? config.tts_provider.trim().toLowerCase()
+            : "";
+
+    if (
+        !provider &&
+        config &&
+        config.voice_config &&
+        typeof config.voice_config.provider === "string"
+    ) {
+        provider = config.voice_config.provider.trim().toLowerCase();
+    }
+
+    return provider === "elevenlabs";
+}
+
 function resolveStartupGreetingText(config) {
     var text =
         config && typeof config.startup_greeting_text === "string"
@@ -163,6 +182,7 @@ function resolveStartupGreetingText(config) {
 }
 
 async function synthesizeStartupGreeting(config, assistantId, startupGreetingText) {
+    var requestedVoiceId = "";
     try {
         var endpoint =
             config && typeof config.tts_endpoint === "string"
@@ -174,13 +194,17 @@ async function synthesizeStartupGreeting(config, assistantId, startupGreetingTex
         }
 
         var voiceConfig = (config && config.voice_config) || {};
+        requestedVoiceId =
+            voiceConfig && typeof voiceConfig.voice_id === "string"
+                ? voiceConfig.voice_id.trim()
+                : "";
         var response = await Net.httpRequestAsync(endpoint, {
             headers: buildHeaders(),
             method: "POST",
             postData: JSON.stringify({
                 assistant_id: assistantId,
                 text: startupGreetingText,
-                voice_id: resolveGeminiVoice(config),
+                voice_id: requestedVoiceId || undefined,
                 speed: toFiniteNumber(voiceConfig.speed, 1),
                 language:
                     typeof voiceConfig.language === "string"
@@ -271,6 +295,10 @@ function playStartupGreeting(call, greetingAudio, startupGreetingText, onFinishe
 }
 
 function resolveGeminiModel(config) {
+    if (isExternalTtsMode(config)) {
+        return DEFAULT_TEXT_MODEL;
+    }
+
     var raw = String(config.model || config.chat_model || "").trim();
 
     if (!raw) {
@@ -301,6 +329,10 @@ function resolveGeminiModel(config) {
 }
 
 function resolveGeminiVoice(config) {
+    if (isExternalTtsMode(config)) {
+        return "";
+    }
+
     var raw =
         config &&
         config.voice_config &&
@@ -317,6 +349,95 @@ function resolveGeminiVoice(config) {
     }
 
     return raw;
+}
+
+function extractPayload(eventData) {
+    return eventData && eventData.data && eventData.data.payload
+        ? eventData.data.payload
+        : {};
+}
+
+function appendTextChunk(existing, chunk) {
+    var next = typeof chunk === "string" ? chunk.trim() : "";
+    if (!next) {
+        return existing || "";
+    }
+
+    var current = existing || "";
+    if (!current) {
+        return next;
+    }
+
+    if (current === next || current.indexOf(next) === current.length - next.length) {
+        return current;
+    }
+
+    if (next.indexOf(current) === 0) {
+        return next;
+    }
+
+    return /[.,!?;:)]$/.test(current) || /^[,!?;:)]/.test(next)
+        ? current + next
+        : current + " " + next;
+}
+
+function extractAssistantTextChunk(eventData, payload) {
+    var chunks = [];
+
+    if (eventData && typeof eventData.text === "string") {
+        chunks.push(eventData.text);
+    }
+
+    if (eventData && eventData.data && typeof eventData.data.text === "string") {
+        chunks.push(eventData.data.text);
+    }
+
+    if (payload && typeof payload.text === "string") {
+        chunks.push(payload.text);
+    }
+
+    var modelTurn = payload && payload.modelTurn;
+    if (modelTurn && Array.isArray(modelTurn.parts)) {
+        for (var i = 0; i < modelTurn.parts.length; i++) {
+            var part = modelTurn.parts[i];
+            if (part && typeof part.text === "string") {
+                chunks.push(part.text);
+            }
+        }
+    }
+
+    return chunks.join(" ").trim();
+}
+
+function splitReadySegments(buffer, flushRemainder) {
+    var source = typeof buffer === "string" ? buffer.trim() : "";
+    if (!source) {
+        return { segments: [], remainder: "" };
+    }
+
+    var segments = [];
+    var regex = /(.+?[.!?]+(?:["»”']+)?)(?=\s+|$)/g;
+    var cursor = 0;
+    var match = null;
+
+    while ((match = regex.exec(source))) {
+        var text = match[1].trim();
+        if (text) {
+            segments.push(text);
+        }
+        cursor = match.index + match[0].length;
+    }
+
+    var remainder = source.slice(cursor).trim();
+    if (flushRemainder && remainder) {
+        segments.push(remainder);
+        remainder = "";
+    }
+
+    return {
+        segments: segments,
+        remainder: remainder,
+    };
 }
 
 async function runGeminiSession(params) {
@@ -346,6 +467,12 @@ async function runGeminiSession(params) {
     var startupGreetingFinished = true;
     var geminiSetupComplete = false;
     var mediaBridged = false;
+    var externalTtsEnabled = false;
+    var externalPlaybackGeneration = 0;
+    var externalPlaybackQueue = [];
+    var externalActivePlayer = null;
+    var externalAssistantBuffer = "";
+    var externalAssistantTurnText = "";
 
     function scheduleHangup(delayMs) {
         if (hangupScheduled) {
@@ -443,6 +570,162 @@ async function runGeminiSession(params) {
         lastFunctionResult = null;
     }
 
+    function stopExternalActivePlayer() {
+        if (!externalActivePlayer) {
+            return;
+        }
+
+        var player = externalActivePlayer;
+        externalActivePlayer = null;
+
+        try {
+            if (typeof player.stopMediaTo === "function") {
+                player.stopMediaTo(call);
+            }
+        } catch (error) {
+            Logger.write("⚠️ Failed to stop player media: " + error);
+        }
+
+        try {
+            if (typeof player.stop === "function") {
+                player.stop();
+            }
+        } catch (error) {
+            Logger.write("⚠️ Failed to stop player: " + error);
+        }
+    }
+
+    function clearExternalPlayback(reason, logPartial) {
+        externalPlaybackGeneration++;
+        externalPlaybackQueue = [];
+        externalAssistantBuffer = "";
+        stopExternalActivePlayer();
+
+        if (logPartial && externalAssistantTurnText.trim()) {
+            lastAssistantMessage = externalAssistantTurnText.trim();
+            externalAssistantTurnText = "";
+            if (lastUserMessage && lastAssistantMessage) {
+                sendConversationLog();
+            }
+        } else if (!logPartial) {
+            externalAssistantTurnText = "";
+        }
+
+        if (reason) {
+            Logger.write("🔇 Cleared external playback: " + reason);
+        }
+    }
+
+    function playNextExternalSegment() {
+        if (externalActivePlayer || !externalPlaybackQueue.length) {
+            return;
+        }
+
+        var segment = externalPlaybackQueue.shift();
+        if (!segment || segment.generation !== externalPlaybackGeneration) {
+            playNextExternalSegment();
+            return;
+        }
+
+        try {
+            var player = VoxEngine.createURLPlayer({
+                url: segment.audioUrl,
+            });
+            externalActivePlayer = player;
+
+            var finish = function() {
+                if (externalActivePlayer === player) {
+                    externalActivePlayer = null;
+                }
+
+                try {
+                    if (typeof player.stopMediaTo === "function") {
+                        player.stopMediaTo(call);
+                    }
+                } catch (error) {}
+
+                try {
+                    player.removeEventListener(PlayerEvents.PlaybackFinished, finish);
+                    player.removeEventListener(PlayerEvents.Stopped, finish);
+                } catch (error) {}
+
+                playNextExternalSegment();
+            };
+
+            player.addEventListener(PlayerEvents.PlaybackFinished, finish);
+            player.addEventListener(PlayerEvents.Stopped, finish);
+            player.addEventListener(PlayerEvents.Error, function(event) {
+                Logger.write(
+                    "⚠️ External TTS playback error: " +
+                        ((event && event.error) || "unknown")
+                );
+                finish();
+            });
+
+            player.sendMediaTo(call);
+        } catch (error) {
+            externalActivePlayer = null;
+            Logger.write("⚠️ External TTS player failed: " + error);
+            playNextExternalSegment();
+        }
+    }
+
+    function enqueueExternalSegment(config, text) {
+        var segmentText = typeof text === "string" ? text.trim() : "";
+        if (!segmentText) {
+            return;
+        }
+
+        externalAssistantTurnText = appendTextChunk(
+            externalAssistantTurnText,
+            segmentText
+        );
+
+        var generation = externalPlaybackGeneration;
+        void (async function() {
+            var synthesized = await synthesizeStartupGreeting(
+                config,
+                assistantId,
+                segmentText
+            );
+
+            if (
+                !synthesized ||
+                !synthesized.audioUrl ||
+                generation !== externalPlaybackGeneration
+            ) {
+                return;
+            }
+
+            externalPlaybackQueue.push({
+                audioUrl: synthesized.audioUrl,
+                generation: generation,
+            });
+            playNextExternalSegment();
+        })();
+    }
+
+    function flushExternalAssistantSegments(config, flushRemainder) {
+        var split = splitReadySegments(externalAssistantBuffer, flushRemainder);
+        externalAssistantBuffer = split.remainder;
+
+        for (var i = 0; i < split.segments.length; i++) {
+            enqueueExternalSegment(config, split.segments[i]);
+        }
+    }
+
+    function finalizeExternalAssistantTurn(config) {
+        flushExternalAssistantSegments(config, true);
+
+        if (externalAssistantTurnText.trim()) {
+            lastAssistantMessage = externalAssistantTurnText.trim();
+            externalAssistantTurnText = "";
+            if (lastUserMessage && lastAssistantMessage) {
+                sendConversationLog();
+            }
+        }
+    }
+
     function maybeBridgeAudio(config) {
         if (mediaBridged || !geminiSetupComplete || !geminiClient) {
             return;
@@ -474,6 +757,9 @@ async function runGeminiSession(params) {
         isTerminating = true;
 
         Logger.write("📴 Call ending — Caller: " + callerNumber);
+        if (externalTtsEnabled) {
+            clearExternalPlayback("call_end", false);
+        }
 
         if (geminiClient) {
             try {
@@ -504,7 +790,7 @@ async function runGeminiSession(params) {
     call.addEventListener(CallEvents.Failed, onCallEnd);
 
     Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    Logger.write("📞 OUTBOUND CALL — GovorI + Gemini Live");
+    Logger.write("📞 OUTBOUND CALL — GovorI + Gemini");
     Logger.write("   Caller: " + callerNumber + ", Call ID: " + callId);
     Logger.write("   Destination: " + (destinationNumber || "unknown"));
     Logger.write("   Assistant ID: " + assistantId);
@@ -534,6 +820,7 @@ async function runGeminiSession(params) {
 
         var config = safeJsonParse(configResponse.text, {});
         Logger.write("✅ Config loaded: " + (config.assistant_name || "unknown"));
+        externalTtsEnabled = isExternalTtsMode(config);
         var startupGreetingText = resolveStartupGreetingText(config);
         var greetingAudio = params.startupGreetingAudioPromise
             ? await params.startupGreetingAudioPromise
@@ -598,7 +885,7 @@ async function runGeminiSession(params) {
         var voiceName = resolveGeminiVoice(config);
 
         var connectConfig = {
-            responseModalities: ["AUDIO"],
+            responseModalities: externalTtsEnabled ? ["TEXT"] : ["AUDIO"],
             realtimeInputConfig: {
                 automaticActivityDetection: {
                     disabled: false,
@@ -615,13 +902,6 @@ async function runGeminiSession(params) {
                 temperature: responseTemperature,
                 maxOutputTokens: responseMaxTokens,
             },
-            speechConfig: {
-                voiceConfig: {
-                    prebuiltVoiceConfig: {
-                        voiceName: voiceName,
-                    },
-                },
-            },
             systemInstruction: {
                 parts: [
                     {
@@ -633,14 +913,28 @@ async function runGeminiSession(params) {
                 ],
             },
             inputAudioTranscription: {},
-            outputAudioTranscription: {},
         };
+
+        if (!externalTtsEnabled) {
+            connectConfig.speechConfig = {
+                voiceConfig: {
+                    prebuiltVoiceConfig: {
+                        voiceName: voiceName,
+                    },
+                },
+            };
+            connectConfig.outputAudioTranscription = {};
+        }
 
         if (geminiTools.length) {
             connectConfig.tools = geminiTools;
         }
 
-        Logger.write("🔌 Connecting to Gemini Live API...");
+        Logger.write(
+            externalTtsEnabled
+                ? "🔌 Connecting to Gemini Live API (text mode + ElevenLabs)..."
+                : "🔌 Connecting to Gemini Live API..."
+        );
         geminiClient = await Gemini.createLiveAPIClient({
             apiKey: config.api_key,
             model: model,
@@ -654,7 +948,11 @@ async function runGeminiSession(params) {
             },
         });
 
-        Logger.write("✅ Gemini connected, model: " + model + ", voice: " + voiceName);
+        Logger.write(
+            "✅ Gemini connected, model: " +
+                model +
+                (externalTtsEnabled ? ", mode: text" : ", voice: " + voiceName)
+        );
 
         geminiClient.addEventListener(Gemini.LiveAPIEvents.SetupComplete, function() {
             Logger.write("✅ Gemini setup complete");
@@ -666,10 +964,7 @@ async function runGeminiSession(params) {
             Gemini.LiveAPIEvents.ServerContent,
             function(eventData) {
                 try {
-                    var payload =
-                        eventData && eventData.data && eventData.data.payload
-                            ? eventData.data.payload
-                            : {};
+                    var payload = extractPayload(eventData);
 
                     var userText =
                         payload.inputTranscription && payload.inputTranscription.text
@@ -680,26 +975,53 @@ async function runGeminiSession(params) {
                         Logger.write("👤 User: \"" + userText.substring(0, 120) + "\"");
                     }
 
-                    var assistantText =
-                        payload.outputTranscription && payload.outputTranscription.text
-                            ? String(payload.outputTranscription.text).trim()
-                            : "";
-                    if (assistantText && assistantText !== lastAssistantMessage) {
-                        lastAssistantMessage = assistantText;
-                        Logger.write(
-                            "🤖 Assistant: \"" +
-                                assistantText.substring(0, 120) +
-                                "\""
+                    if (externalTtsEnabled) {
+                        var assistantTextChunk = extractAssistantTextChunk(
+                            eventData,
+                            payload
                         );
+                        if (assistantTextChunk) {
+                            externalAssistantBuffer = appendTextChunk(
+                                externalAssistantBuffer,
+                                assistantTextChunk
+                            );
+                            Logger.write(
+                                "🤖 Assistant chunk: \"" +
+                                    assistantTextChunk.substring(0, 120) +
+                                    "\""
+                            );
+                            flushExternalAssistantSegments(config, false);
+                        }
+                    } else {
+                        var assistantText =
+                            payload.outputTranscription && payload.outputTranscription.text
+                                ? String(payload.outputTranscription.text).trim()
+                                : "";
+                        if (assistantText && assistantText !== lastAssistantMessage) {
+                            lastAssistantMessage = assistantText;
+                            Logger.write(
+                                "🤖 Assistant: \"" +
+                                    assistantText.substring(0, 120) +
+                                    "\""
+                            );
 
-                        if (lastUserMessage && lastAssistantMessage) {
-                            sendConversationLog();
+                            if (lastUserMessage && lastAssistantMessage) {
+                                sendConversationLog();
+                            }
                         }
                     }
 
                     if (payload.interrupted) {
                         Logger.write("🔇 Interruption detected");
-                        geminiClient.clearMediaBuffer();
+                        if (externalTtsEnabled) {
+                            clearExternalPlayback("interrupted", true);
+                        } else {
+                            geminiClient.clearMediaBuffer();
+                        }
+                    }
+
+                    if (externalTtsEnabled && payload.turnComplete) {
+                        finalizeExternalAssistantTurn(config);
                     }
                 } catch (error) {
                     Logger.write("❌ ServerContent handler error: " + error);
@@ -840,7 +1162,11 @@ async function runGeminiSession(params) {
         );
 
         Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        Logger.write("🎉 READY — GovorI OUTBOUND + Gemini Live");
+        Logger.write(
+            externalTtsEnabled
+                ? "🎉 READY — GovorI OUTBOUND + Gemini Text + ElevenLabs"
+                : "🎉 READY — GovorI OUTBOUND + Gemini Live"
+        );
         Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     } catch (error) {
         Logger.write("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

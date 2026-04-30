@@ -13,6 +13,7 @@ import { IntegrationsService } from "@/integrations/integrations.service.js";
 import { VoximplantTelephonyProvider } from "@/providers/voximplant-telephony.provider.js";
 import { GeminiSpeechToTextProvider } from "@/providers/gemini-stt.provider.js";
 import { GeminiTtsProvider } from "@/providers/gemini-tts.provider.js";
+import { ElevenLabsTtsProvider } from "@/providers/elevenlabs-tts.provider.js";
 import { GeminiConversationProvider } from "@/providers/gemini-conversation.provider.js";
 import { ConversationService } from "@/calls/conversation.service.js";
 import { AgentService } from "@/agent/agent.service.js";
@@ -83,16 +84,7 @@ export async function buildApp(
       getModel: async () =>
         (await integrationsService.getDecrypted()).gemini.sttModel,
     });
-  const ttsProvider =
-    options.ttsProvider ??
-    new GeminiTtsProvider({
-      getApiKey: async () =>
-        (await integrationsService.getDecrypted()).gemini.apiKey,
-      getVoiceId: async () =>
-        (await integrationsService.getDecrypted()).gemini.ttsVoice,
-      getModelId: async () =>
-        (await integrationsService.getDecrypted()).gemini.ttsModel,
-    });
+  const ttsProvider = options.ttsProvider ?? buildTtsProvider(integrationsService);
 
   const llmProvider =
     options.llmProvider ??
@@ -238,6 +230,37 @@ export async function buildApp(
   });
 
   return app;
+}
+
+function buildTtsProvider(
+  integrationsService: IntegrationsService,
+): TtsProvider {
+  const provider = env.TTS_PROVIDER.trim().toLowerCase();
+
+  if (provider === "elevenlabs") {
+    return new ElevenLabsTtsProvider({
+      getApiKey: async () =>
+        (await integrationsService.getDecrypted()).tts.apiKey ??
+        env.ELEVENLABS_API_KEY ??
+        null,
+      getVoiceId: async () =>
+        (await integrationsService.getDecrypted()).tts.voiceId ??
+        env.ELEVENLABS_VOICE_ID ??
+        null,
+      getModelId: async () =>
+        (await integrationsService.getDecrypted()).tts.modelId ??
+        env.ELEVENLABS_MODEL_ID,
+    });
+  }
+
+  return new GeminiTtsProvider({
+    getApiKey: async () =>
+      (await integrationsService.getDecrypted()).gemini.apiKey,
+    getVoiceId: async () =>
+      (await integrationsService.getDecrypted()).gemini.ttsVoice,
+    getModelId: async () =>
+      (await integrationsService.getDecrypted()).gemini.ttsModel,
+  });
 }
 
 function requestScopedLog(app: FastifyInstance, error: unknown): void {
