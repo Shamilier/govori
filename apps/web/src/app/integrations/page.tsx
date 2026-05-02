@@ -32,6 +32,7 @@ type IntegrationsForm = {
   elevenlabsApiKey: string;
   elevenlabsVoiceId: string;
   elevenlabsModelId: string;
+  elevenlabsAgentId: string;
 };
 
 type IntegrationsResponse = Partial<IntegrationsForm> & {
@@ -55,6 +56,7 @@ const empty: IntegrationsForm = {
   elevenlabsApiKey: "",
   elevenlabsVoiceId: "JBFqnCBsd6RMkjVDRZzb",
   elevenlabsModelId: "eleven_flash_v2_5",
+  elevenlabsAgentId: "",
 };
 
 export default function IntegrationsPage() {
@@ -367,6 +369,18 @@ export default function IntegrationsPage() {
                         }
                       />
                     </div>
+                  </div>
+                  <div>
+                    <label>ElevenLabs agent ID</label>
+                    <input
+                      value={form.elevenlabsAgentId}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          elevenlabsAgentId: event.target.value,
+                        })
+                      }
+                    />
                   </div>
                 </div>
               </section>

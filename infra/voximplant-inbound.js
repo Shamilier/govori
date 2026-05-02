@@ -7,6 +7,7 @@
  */
 
 require(Modules.Gemini);
+require(Modules.ElevenLabs);
 
 // ============================================================
 // CONFIGURATION — keep URLs aligned with your deployed backend
@@ -478,6 +479,49 @@ function splitReadySegments(buffer, flushRemainder) {
     };
 }
 
+function buildElevenLabsOverrides(config, startupGreetingText) {
+    var agentSettings = config.agent_settings || {};
+    var responseMaxTokens = clamp(
+        Math.round(toFiniteNumber(agentSettings.response_max_tokens, 80)),
+        32,
+        1024
+    );
+    var responseTemperature = clamp(
+        toFiniteNumber(agentSettings.response_temperature, 0.2),
+        0,
+        1.2
+    );
+    var voiceConfig = (config && config.voice_config) || {};
+
+    return {
+        conversation_config_override: {
+            agent: {
+                prompt: {
+                    prompt: (config.prompt || "Ты голосовой AI-агент.").trim(),
+                },
+                first_message: startupGreetingText,
+                language:
+                    typeof voiceConfig.language === "string"
+                        ? voiceConfig.language
+                        : "ru",
+            },
+            tts: {
+                voice_id:
+                    typeof voiceConfig.voice_id === "string"
+                        ? voiceConfig.voice_id.trim()
+                        : undefined,
+            },
+        },
+        custom_llm_extra_body: {
+            temperature: responseTemperature,
+            max_tokens: responseMaxTokens,
+        },
+        dynamic_variables: {
+            assistant_name: config.assistant_name || "Assistant",
+        },
+    };
+}
+
 // ============================================================
 // MAIN HANDLER
 // ============================================================
@@ -858,6 +902,236 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
         Logger.write("✅ Config loaded: " + (config.assistant_name || "unknown"));
         externalTtsEnabled = isExternalTtsMode(config);
         var startupGreetingText = resolveStartupGreetingText(config);
+        if (externalTtsEnabled) {
+            var elevenAgentId =
+                config &&
+                config.elevenlabs &&
+                typeof config.elevenlabs.agent_id === "string"
+                    ? config.elevenlabs.agent_id.trim()
+                    : "";
+            var elevenApiKey =
+                config &&
+                config.elevenlabs &&
+                typeof config.elevenlabs.api_key === "string"
+                    ? config.elevenlabs.api_key.trim()
+                    : "";
+
+            if (!elevenAgentId || !elevenApiKey) {
+                Logger.write(
+                    "❌ ElevenLabs config missing: agent_id or api_key not provided"
+                );
+                VoxEngine.terminate();
+                return;
+            }
+
+            call.answer();
+            callAnswered = true;
+            startCallRecording();
+
+            sendLogToBackend({
+                type: "call_started",
+                data: {
+                    agent_name: config.assistant_name,
+                    runtime: "elevenlabs",
+                },
+            });
+
+            Logger.write("🔌 Connecting to ElevenLabs Conversational AI...");
+            var elevenClient = await ElevenLabs.createConversationalAIClient({
+                agentId: elevenAgentId,
+                xiApiKey: elevenApiKey,
+                onWebSocketClose: function() {
+                    Logger.write("🔌 ElevenLabs WebSocket closed");
+                    if (!isTerminating) {
+                        onCallEnd();
+                    }
+                },
+            });
+            geminiClient = elevenClient;
+
+            elevenClient.addEventListener(
+                ElevenLabs.ConversationalAIEvents.UserTranscript,
+                function(eventData) {
+                    var data = (eventData && eventData.data) || {};
+                    var transcript =
+                        data.user_transcript ||
+                        (data.user_transcription_event &&
+                            data.user_transcription_event.user_transcript) ||
+                        data.text ||
+                        "";
+                    transcript = String(transcript || "").trim();
+                    if (transcript) {
+                        lastUserMessage = transcript;
+                        Logger.write("👤 User: \"" + transcript.substring(0, 120) + "\"");
+                    }
+                }
+            );
+
+            elevenClient.addEventListener(
+                ElevenLabs.ConversationalAIEvents.AgentResponse,
+                function(eventData) {
+                    var data = (eventData && eventData.data) || {};
+                    var response =
+                        data.agent_response ||
+                        (data.agent_response_event &&
+                            data.agent_response_event.agent_response) ||
+                        data.text ||
+                        "";
+                    response = String(response || "").trim();
+                    if (response) {
+                        lastAssistantMessage = response;
+                        Logger.write(
+                            "🤖 Assistant: \"" + response.substring(0, 120) + "\""
+                        );
+                        if (lastUserMessage && lastAssistantMessage) {
+                            sendConversationLog();
+                        }
+                    }
+                }
+            );
+
+            elevenClient.addEventListener(
+                ElevenLabs.ConversationalAIEvents.AgentResponseCorrection,
+                function(eventData) {
+                    var data = (eventData && eventData.data) || {};
+                    var response =
+                        data.corrected_agent_response ||
+                        (data.agent_response_correction_event &&
+                            data.agent_response_correction_event.corrected_agent_response) ||
+                        "";
+                    response = String(response || "").trim();
+                    if (response) {
+                        lastAssistantMessage = response;
+                        Logger.write(
+                            "🤖 Assistant corrected: \"" +
+                                response.substring(0, 120) +
+                                "\""
+                        );
+                    }
+                }
+            );
+
+            elevenClient.addEventListener(
+                ElevenLabs.ConversationalAIEvents.ClientToolCall,
+                async function(eventData) {
+                    try {
+                        var data = (eventData && eventData.data) || {};
+                        var toolName =
+                            data.tool_name ||
+                            (data.client_tool_call && data.client_tool_call.tool_name) ||
+                            "";
+                        var toolCallId =
+                            data.tool_call_id ||
+                            (data.client_tool_call &&
+                                data.client_tool_call.tool_call_id) ||
+                            "";
+                        var parameters =
+                            data.parameters ||
+                            (data.client_tool_call &&
+                                data.client_tool_call.parameters) ||
+                            {};
+
+                        if (!toolName || !toolCallId) {
+                            return;
+                        }
+
+                        Logger.write(
+                            "🔧 Eleven tool: " +
+                                toolName +
+                                " — " +
+                                JSON.stringify(parameters)
+                        );
+
+                        var backendFunctionId =
+                            toolName === "hangup_call"
+                                ? "1"
+                                : toolName === "save_callback_request"
+                                  ? "2"
+                                  : "";
+                        var backendResult = {
+                            error: "Unknown function: " + toolName,
+                        };
+
+                        if (backendFunctionId) {
+                            var funcHttp = await Net.httpRequestAsync(FUNCTIONS_URL, {
+                                headers: buildHeaders(),
+                                method: "POST",
+                                postData: JSON.stringify({
+                                    function_id: backendFunctionId,
+                                    arguments: parameters,
+                                    call_data: {
+                                        call_id: callId,
+                                        chat_id: chatId,
+                                        assistant_id: assistantId,
+                                        caller_number: callerNumber,
+                                        destination_number: destinationNumber || undefined,
+                                    },
+                                }),
+                            });
+
+                            if (funcHttp.code === 200) {
+                                backendResult = safeJsonParse(funcHttp.text, {
+                                    raw: funcHttp.text,
+                                });
+                            } else {
+                                backendResult = {
+                                    error: "Function failed: HTTP " + funcHttp.code,
+                                    body: funcHttp.text,
+                                };
+                            }
+                        }
+
+                        lastFunctionResult = backendResult;
+                        elevenClient.clientToolResult({
+                            tool_call_id: toolCallId,
+                            result: JSON.stringify(backendResult),
+                            is_error: Boolean(backendResult.error),
+                        });
+
+                        if (toolName === "hangup_call") {
+                            scheduleHangup(3200);
+                        }
+                    } catch (error) {
+                        Logger.write("❌ Eleven ClientToolCall error: " + error);
+                    }
+                }
+            );
+
+            elevenClient.addEventListener(
+                ElevenLabs.ConversationalAIEvents.Interruption,
+                function() {
+                    Logger.write("🔇 ElevenLabs interruption");
+                }
+            );
+
+            elevenClient.addEventListener(
+                ElevenLabs.ConversationalAIEvents.WebSocketError,
+                function(eventData) {
+                    Logger.write(
+                        "❌ ElevenLabs WebSocket error: " +
+                            JSON.stringify((eventData && eventData.data) || {})
+                    );
+                }
+            );
+
+            elevenClient.conversationInitiationClientData(
+                buildElevenLabsOverrides(config, startupGreetingText)
+            );
+            VoxEngine.sendMediaBetween(call, elevenClient);
+
+            sendLogToBackend({
+                type: "startup_greeting",
+                data: {
+                    assistant_message: startupGreetingText,
+                    direction: "inbound",
+                    synthesized_with_agent_voice: true,
+                    runtime: "elevenlabs",
+                },
+            });
+
+            Logger.write("🎉 READY — GovorI v3.0 + ElevenLabs");
+            return;
+        }
         var greetingAudio = await synthesizeStartupGreeting(
             config,
             assistantId,

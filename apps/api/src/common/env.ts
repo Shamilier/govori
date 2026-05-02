@@ -65,6 +65,7 @@ const envSchema = z.object({
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_VOICE_ID: z.string().optional(),
   ELEVENLABS_MODEL_ID: z.string().default("eleven_flash_v2_5"),
+  ELEVENLABS_AGENT_ID: z.string().optional(),
   LLM_PROVIDER: z.string().default("gemini"),
   LLM_API_KEY: z.string().optional(),
   LLM_MODEL: z.string().default("gemini-2.5-flash"),

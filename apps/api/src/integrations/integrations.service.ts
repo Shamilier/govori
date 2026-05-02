@@ -37,6 +37,7 @@ export type DecryptedIntegrationSettings = {
     apiKey: string | null;
     modelId: string;
     voiceId: string;
+    agentId: string | null;
   };
   stt: {
     apiKey: string | null;
@@ -145,6 +146,7 @@ export class IntegrationsService {
       apiKey: string | null;
       modelId: string;
       voiceId: string;
+      agentId: string | null;
     };
   }): DecryptedIntegrationSettings {
     return {
@@ -241,6 +243,11 @@ export class IntegrationsService {
           fallback?.voiceId ??
           env.ELEVENLABS_VOICE_ID ??
           "JBFqnCBsd6RMkjVDRZzb",
+        agentId:
+          readString(params.cartesia, "agentId") ??
+          fallback?.agentId ??
+          env.ELEVENLABS_AGENT_ID ??
+          null,
       };
     }
 
@@ -261,6 +268,11 @@ export class IntegrationsService {
         fallback?.voiceId ??
         env.GEMINI_TTS_VOICE ??
         "Kore",
+      agentId:
+        readString(params.cartesia, "agentId") ??
+        fallback?.agentId ??
+        env.ELEVENLABS_AGENT_ID ??
+        null,
     };
   }
 
@@ -300,6 +312,7 @@ export class IntegrationsService {
       elevenlabsApiKey: maskValue(decrypted.tts.apiKey),
       elevenlabsVoiceId: decrypted.tts.voiceId,
       elevenlabsModelId: decrypted.tts.modelId,
+      elevenlabsAgentId: decrypted.tts.agentId,
       // Legacy aliases for old UI payloads.
       cartesiaApiKey: maskValue(decrypted.tts.apiKey),
       cartesiaVoiceId: decrypted.tts.voiceId,
@@ -471,6 +484,7 @@ export class IntegrationsService {
       elevenlabsApiKey: maskValue(decrypted.tts.apiKey),
       elevenlabsVoiceId: decrypted.tts.voiceId,
       elevenlabsModelId: decrypted.tts.modelId,
+      elevenlabsAgentId: decrypted.tts.agentId,
       cartesiaApiKey: maskValue(decrypted.tts.apiKey),
       cartesiaVoiceId: decrypted.tts.voiceId,
       cartesiaModelId: decrypted.tts.modelId,
@@ -553,6 +567,10 @@ export class IntegrationsService {
       ) ??
       readString(prevCartesia, "voiceId") ??
       fallback.tts.voiceId;
+    const nextTtsAgentId =
+      normalizeNonEmpty(input.elevenlabsAgentId) ??
+      readString(prevCartesia, "agentId") ??
+      fallback.tts.agentId;
 
     const nextGeminiSttModel =
       normalizeNonEmpty(input.geminiSttModel) ??
@@ -566,6 +584,7 @@ export class IntegrationsService {
       ),
       voiceId: nextTtsVoice,
       modelId: nextTtsModel,
+      agentId: nextTtsAgentId,
     };
 
     const nextLlm = {
@@ -680,6 +699,11 @@ export class IntegrationsService {
         ? env.ELEVENLABS_VOICE_ID
         : env.GEMINI_TTS_VOICE) ??
       "Kore";
+    const nextTtsAgentId =
+      normalizeNonEmpty(input.elevenlabsAgentId) ??
+      readString(prevCartesia, "agentId") ??
+      env.ELEVENLABS_AGENT_ID ??
+      null;
 
     const nextGeminiSttModel =
       normalizeNonEmpty(input.geminiSttModel) ??
@@ -693,6 +717,7 @@ export class IntegrationsService {
       ),
       voiceId: nextTtsVoice,
       modelId: nextTtsModel,
+      agentId: nextTtsAgentId,
     };
 
     const nextLlm = {

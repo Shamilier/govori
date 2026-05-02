@@ -258,6 +258,15 @@ export class VoximplantService {
       startup_greeting_text: agent.greetingText,
       google_sheet_id: null,
       tts_provider: integrations.tts.provider,
+      elevenlabs: {
+        agent_id: integrations.tts.agentId,
+        api_key: integrations.tts.apiKey,
+        voice_id:
+          agent.ttsVoiceId ??
+          integrations.tts.voiceId ??
+          env.ELEVENLABS_VOICE_ID ??
+          null,
+      },
       tts_endpoint: `${baseUrl}/api/voximplant/synthesize`,
       tts_audio_base_url: `${baseUrl}/api/voximplant/audio`,
       voice_config: {
