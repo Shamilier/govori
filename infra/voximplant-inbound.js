@@ -936,12 +936,15 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
                 },
             });
 
-            Logger.write("🔌 Connecting to ElevenLabs Conversational AI...");
-            var elevenClient = await ElevenLabs.createConversationalAIClient({
+            Logger.write("🔌 Connecting to ElevenLabs Agents Client...");
+            var elevenClient = await ElevenLabs.createAgentsClient({
                 agentId: elevenAgentId,
                 xiApiKey: elevenApiKey,
-                onWebSocketClose: function() {
+                onWebSocketClose: function(event) {
                     Logger.write("🔌 ElevenLabs WebSocket closed");
+                    if (event) {
+                        Logger.write(JSON.stringify(event));
+                    }
                     if (!isTerminating) {
                         onCallEnd();
                     }
@@ -950,7 +953,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
             geminiClient = elevenClient;
 
             elevenClient.addEventListener(
-                ElevenLabs.ConversationalAIEvents.UserTranscript,
+                ElevenLabs.AgentsEvents.UserTranscript,
                 function(eventData) {
                     var data = (eventData && eventData.data) || {};
                     var transcript =
@@ -968,7 +971,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
             );
 
             elevenClient.addEventListener(
-                ElevenLabs.ConversationalAIEvents.AgentResponse,
+                ElevenLabs.AgentsEvents.AgentResponse,
                 function(eventData) {
                     var data = (eventData && eventData.data) || {};
                     var response =
@@ -991,7 +994,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
             );
 
             elevenClient.addEventListener(
-                ElevenLabs.ConversationalAIEvents.AgentResponseCorrection,
+                ElevenLabs.AgentsEvents.AgentResponseCorrection,
                 function(eventData) {
                     var data = (eventData && eventData.data) || {};
                     var response =
@@ -1012,27 +1015,53 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
             );
 
             elevenClient.addEventListener(
-                ElevenLabs.ConversationalAIEvents.ClientToolCall,
-                async function(eventData) {
+                ElevenLabs.AgentsEvents.ClientToolCall,
+                async function(event) {
                     try {
-                        var data = (eventData && eventData.data) || {};
+                        var payload =
+                            event && event.data && event.data.payload
+                                ? event.data.payload
+                                : (event && event.data) || {};
                         var toolName =
-                            data.tool_name ||
-                            (data.client_tool_call && data.client_tool_call.tool_name) ||
+                            payload.tool_name ||
+                            payload.toolName ||
+                            payload.name ||
+                            (payload.client_tool_call &&
+                                payload.client_tool_call.tool_name) ||
                             "";
                         var toolCallId =
-                            data.tool_call_id ||
-                            (data.client_tool_call &&
-                                data.client_tool_call.tool_call_id) ||
+                            payload.tool_call_id ||
+                            payload.toolCallId ||
+                            payload.id ||
+                            (payload.client_tool_call &&
+                                payload.client_tool_call.tool_call_id) ||
                             "";
-                        var parameters =
-                            data.parameters ||
-                            (data.client_tool_call &&
-                                data.client_tool_call.parameters) ||
-                            {};
 
                         if (!toolName || !toolCallId) {
+                            Logger.write(
+                                "⚠️ ClientToolCall missing fields: " +
+                                    JSON.stringify(payload)
+                            );
                             return;
+                        }
+
+                        var rawArgs =
+                            payload.parameters ||
+                            payload.args ||
+                            payload.arguments ||
+                            (payload.client_tool_call &&
+                                payload.client_tool_call.parameters) ||
+                            {};
+                        var parameters = rawArgs;
+                        if (typeof rawArgs === "string") {
+                            try {
+                                parameters = JSON.parse(rawArgs);
+                            } catch (e) {
+                                Logger.write(
+                                    "⚠️ ClientToolCall args parse error: " + rawArgs
+                                );
+                                parameters = {};
+                            }
                         }
 
                         Logger.write(
@@ -1084,6 +1113,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
                         lastFunctionResult = backendResult;
                         elevenClient.clientToolResult({
                             tool_call_id: toolCallId,
+                            tool_name: toolName,
                             result: JSON.stringify(backendResult),
                             is_error: Boolean(backendResult.error),
                         });
@@ -1098,14 +1128,23 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
             );
 
             elevenClient.addEventListener(
-                ElevenLabs.ConversationalAIEvents.Interruption,
+                ElevenLabs.AgentsEvents.Interruption,
                 function() {
                     Logger.write("🔇 ElevenLabs interruption");
+                    if (typeof elevenClient.clearMediaBuffer === "function") {
+                        try {
+                            elevenClient.clearMediaBuffer();
+                        } catch (error) {
+                            Logger.write(
+                                "⚠️ Failed to clear ElevenLabs media buffer: " + error
+                            );
+                        }
+                    }
                 }
             );
 
             elevenClient.addEventListener(
-                ElevenLabs.ConversationalAIEvents.WebSocketError,
+                ElevenLabs.AgentsEvents.WebSocketError,
                 function(eventData) {
                     Logger.write(
                         "❌ ElevenLabs WebSocket error: " +
