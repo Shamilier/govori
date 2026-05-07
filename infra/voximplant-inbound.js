@@ -479,49 +479,6 @@ function splitReadySegments(buffer, flushRemainder) {
     };
 }
 
-function buildElevenLabsOverrides(config, startupGreetingText) {
-    var agentSettings = config.agent_settings || {};
-    var responseMaxTokens = clamp(
-        Math.round(toFiniteNumber(agentSettings.response_max_tokens, 80)),
-        32,
-        1024
-    );
-    var responseTemperature = clamp(
-        toFiniteNumber(agentSettings.response_temperature, 0.2),
-        0,
-        1.2
-    );
-    var voiceConfig = (config && config.voice_config) || {};
-
-    return {
-        conversation_config_override: {
-            agent: {
-                prompt: {
-                    prompt: (config.prompt || "Ты голосовой AI-агент.").trim(),
-                },
-                first_message: startupGreetingText,
-                language:
-                    typeof voiceConfig.language === "string"
-                        ? voiceConfig.language
-                        : "ru",
-            },
-            tts: {
-                voice_id:
-                    typeof voiceConfig.voice_id === "string"
-                        ? voiceConfig.voice_id.trim()
-                        : undefined,
-            },
-        },
-        custom_llm_extra_body: {
-            temperature: responseTemperature,
-            max_tokens: responseMaxTokens,
-        },
-        dynamic_variables: {
-            assistant_name: config.assistant_name || "Assistant",
-        },
-    };
-}
-
 // ============================================================
 // MAIN HANDLER
 // ============================================================
@@ -932,7 +889,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
                 type: "call_started",
                 data: {
                     agent_name: config.assistant_name,
-                    runtime: "elevenlabs",
+                    runtime: "elevenlabs_agent",
                 },
             });
 
@@ -1153,22 +1110,8 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
                 }
             );
 
-            elevenClient.conversationInitiationClientData(
-                buildElevenLabsOverrides(config, startupGreetingText)
-            );
             VoxEngine.sendMediaBetween(call, elevenClient);
-
-            sendLogToBackend({
-                type: "startup_greeting",
-                data: {
-                    assistant_message: startupGreetingText,
-                    direction: "inbound",
-                    synthesized_with_agent_voice: true,
-                    runtime: "elevenlabs",
-                },
-            });
-
-            Logger.write("🎉 READY — GovorI v3.0 + ElevenLabs");
+            Logger.write("🎉 READY — GovorI v3.0 + ElevenLabs Agent");
             return;
         }
         var greetingAudio = await synthesizeStartupGreeting(
