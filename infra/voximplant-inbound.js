@@ -858,6 +858,15 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, async function(event) {
         var config = safeJsonParse(configResponse.text, {});
         Logger.write("✅ Config loaded: " + (config.assistant_name || "unknown"));
         externalTtsEnabled = isExternalTtsMode(config);
+        if (!externalTtsEnabled) {
+            Logger.write(
+                "❌ Refusing to start: tts_provider must be 'elevenlabs' (got '" +
+                    (config && config.tts_provider) +
+                    "'). Gemini+TTS fallback is disabled to prevent accidental cost."
+            );
+            VoxEngine.terminate();
+            return;
+        }
         var startupGreetingText = resolveStartupGreetingText(config);
         if (externalTtsEnabled) {
             var elevenAgentId =

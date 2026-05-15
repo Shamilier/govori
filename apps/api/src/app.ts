@@ -16,6 +16,7 @@ import { GeminiTtsProvider } from "@/providers/gemini-tts.provider.js";
 import { ElevenLabsTtsProvider } from "@/providers/elevenlabs-tts.provider.js";
 import { GeminiConversationProvider } from "@/providers/gemini-conversation.provider.js";
 import { ConversationService } from "@/calls/conversation.service.js";
+import { CallClassificationService } from "@/calls/call-classification.service.js";
 import { AgentService } from "@/agent/agent.service.js";
 import { CallsService } from "@/calls/calls.service.js";
 import { CallSessionOrchestrator } from "@/calls/call-session.orchestrator.js";
@@ -96,6 +97,10 @@ export async function buildApp(
     });
 
   const conversationService = new ConversationService(llmProvider);
+  const callClassificationService = new CallClassificationService(
+    prisma,
+    integrationsService,
+  );
   const authService = new AuthService(prisma);
   const telegramAuthService = new TelegramAuthService(
     prisma,
@@ -106,6 +111,7 @@ export async function buildApp(
     prisma,
     integrationsService,
     telephonyProvider,
+    callClassificationService,
   );
   const agentService = new AgentService(
     prisma,
@@ -132,6 +138,7 @@ export async function buildApp(
     conversationService,
     ttsProvider,
     redis,
+    callClassificationService,
   );
   const orchestrator = new CallSessionOrchestrator(
     prisma,
@@ -143,8 +150,12 @@ export async function buildApp(
     conversationService,
   );
 
+  const corsOrigins = [env.WEB_ORIGIN];
+  if (env.WEBAPP_BASE_URL && !corsOrigins.includes(env.WEBAPP_BASE_URL)) {
+    corsOrigins.push(env.WEBAPP_BASE_URL);
+  }
   await app.register(cors, {
-    origin: env.WEB_ORIGIN,
+    origin: corsOrigins,
     credentials: true,
   });
 

@@ -7,8 +7,10 @@ import type {
   TelegramClientUpdatePromptInput,
   TelegramClientUpdateVoiceInput,
 } from "@/telegram-client/telegram-client.schemas.js";
+import { CallCategory } from "@prisma/client";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { TelephonyProvider } from "@/providers/telephony.provider.js";
+import type { CallClassificationService } from "@/calls/call-classification.service.js";
 
 function normalizePhone(value?: string | null): string | null {
   if (!value) {
@@ -59,6 +61,70 @@ type ReportCall = Prisma.CallGetPayload<{
 }>;
 
 type InterestScore = -1 | 0 | 1 | 2;
+
+export type DashboardPeriod =
+  | "today"
+  | "yesterday"
+  | "week"
+  | "month"
+  | "all"
+  | { from: Date; to?: Date };
+
+function resolveDashboardRange(period: DashboardPeriod): {
+  from: Date | null;
+  to: Date | null;
+  label: string;
+} {
+  const now = new Date();
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+
+  if (typeof period === "object" && period.from instanceof Date) {
+    return {
+      from: period.from,
+      to: period.to ?? null,
+      label: "custom",
+    };
+  }
+
+  switch (period) {
+    case "today":
+      return { from: startOfDay, to: null, label: "today" };
+    case "yesterday": {
+      const from = new Date(startOfDay);
+      from.setDate(from.getDate() - 1);
+      return { from, to: startOfDay, label: "yesterday" };
+    }
+    case "week": {
+      const from = new Date(startOfDay);
+      from.setDate(from.getDate() - 7);
+      return { from, to: null, label: "week" };
+    }
+    case "month": {
+      const from = new Date(startOfDay);
+      from.setDate(from.getDate() - 30);
+      return { from, to: null, label: "month" };
+    }
+    case "all":
+    default:
+      return { from: null, to: null, label: "all" };
+  }
+}
+
+function categoryFromString(
+  value: "hot" | "warm" | "cold" | "no_answer",
+): CallCategory {
+  switch (value) {
+    case "hot":
+      return CallCategory.HOT;
+    case "warm":
+      return CallCategory.WARM;
+    case "cold":
+      return CallCategory.COLD;
+    case "no_answer":
+      return CallCategory.NO_ANSWER;
+  }
+}
 
 function base64Url(input: string | Buffer): string {
   return Buffer.from(input)
@@ -186,6 +252,7 @@ export class TelegramClientService {
     private readonly prisma: PrismaClient,
     private readonly integrationsService: IntegrationsService,
     private readonly telephonyProvider: TelephonyProvider,
+    private readonly classificationService: CallClassificationService,
   ) {}
 
   async getState(telegramUserId: number): Promise<Record<string, unknown>> {
@@ -326,6 +393,179 @@ export class TelegramClientService {
         managerQueue: byScore["2"],
       },
       calls: items,
+    };
+  }
+
+  async getDashboard(
+    telegramUserId: number,
+    period: DashboardPeriod,
+  ): Promise<Record<string, unknown>> {
+    const binding = await this.resolveBinding(telegramUserId);
+    const range = resolveDashboardRange(period);
+
+    const calls = await this.prisma.call.findMany({
+      where: {
+        tenantId: binding.tenantId,
+        startedAt: range.from ? { gte: range.from } : undefined,
+      },
+      select: {
+        id: true,
+        category: true,
+        durationSec: true,
+        status: true,
+        endedAt: true,
+      },
+    });
+
+    const total = calls.length;
+    const answered = calls.filter(
+      (c) => c.category !== CallCategory.NO_ANSWER,
+    ).length;
+    const longTalk = calls.filter((c) => (c.durationSec ?? 0) >= 30).length;
+    const hot = calls.filter((c) => c.category === CallCategory.HOT).length;
+    const warm = calls.filter((c) => c.category === CallCategory.WARM).length;
+    const cold = calls.filter((c) => c.category === CallCategory.COLD).length;
+    const noAnswer = calls.filter(
+      (c) => c.category === CallCategory.NO_ANSWER,
+    ).length;
+
+    return {
+      tenantId: binding.tenantId,
+      period: range.label,
+      periodFrom: range.from,
+      periodTo: range.to,
+      funnel: {
+        dialed: total,
+        answered,
+        longTalk,
+        hot,
+        warm,
+        cold,
+        noAnswer,
+      },
+      counts: { all: total, hot, warm, cold, noAnswer },
+    };
+  }
+
+  async getLeads(
+    telegramUserId: number,
+    options: {
+      period: DashboardPeriod;
+      category: "all" | "hot" | "warm" | "cold" | "no_answer";
+      limit: number;
+      offset?: number;
+    },
+  ): Promise<Record<string, unknown>> {
+    const binding = await this.resolveBinding(telegramUserId);
+    const range = resolveDashboardRange(options.period);
+
+    const where: Prisma.CallWhereInput = {
+      tenantId: binding.tenantId,
+      startedAt: range.from ? { gte: range.from } : undefined,
+    };
+
+    if (options.category !== "all") {
+      where.category = categoryFromString(options.category);
+    }
+
+    const calls = await this.prisma.call.findMany({
+      where,
+      orderBy: { startedAt: "desc" },
+      take: Math.min(options.limit, 200),
+      skip: options.offset ?? 0,
+      select: {
+        id: true,
+        startedAt: true,
+        endedAt: true,
+        durationSec: true,
+        direction: true,
+        callerPhone: true,
+        calleePhone: true,
+        category: true,
+        summaryText: true,
+        nextStep: true,
+        leadName: true,
+        recordingUrl: true,
+      },
+    });
+
+    const leads = calls.map((call) => {
+      const counterpartPhone =
+        call.direction === "OUTBOUND" ? call.calleePhone : call.callerPhone;
+      return {
+        id: call.id,
+        startedAt: call.startedAt,
+        endedAt: call.endedAt,
+        durationSec: call.durationSec,
+        direction: call.direction,
+        phone: counterpartPhone,
+        leadName: call.leadName,
+        displayName: call.leadName ?? counterpartPhone ?? "Без номера",
+        category: call.category,
+        summary: call.summaryText,
+        nextStep: call.nextStep,
+        hasRecording: Boolean(call.recordingUrl),
+      };
+    });
+
+    return {
+      period: range.label,
+      category: options.category,
+      total: leads.length,
+      leads,
+    };
+  }
+
+  async getLeadDetail(
+    telegramUserId: number,
+    callId: string,
+  ): Promise<Record<string, unknown> | null> {
+    const binding = await this.resolveBinding(telegramUserId);
+
+    const call = await this.prisma.call.findFirst({
+      where: { id: callId, tenantId: binding.tenantId },
+      include: {
+        messages: { orderBy: { sequenceNo: "asc" } },
+      },
+    });
+
+    if (!call) {
+      return null;
+    }
+
+    // Lazy classification: if not yet classified (e.g. legacy call),
+    // schedule it now but return what we have.
+    if (!call.classifiedAt) {
+      void this.classificationService
+        .classifyCall(call.id)
+        .catch(() => undefined);
+    }
+
+    const counterpartPhone =
+      call.direction === "OUTBOUND" ? call.calleePhone : call.callerPhone;
+
+    return {
+      id: call.id,
+      startedAt: call.startedAt,
+      endedAt: call.endedAt,
+      durationSec: call.durationSec,
+      direction: call.direction,
+      status: call.status,
+      phone: counterpartPhone,
+      leadName: call.leadName,
+      displayName: call.leadName ?? counterpartPhone ?? "Без номера",
+      category: call.category,
+      summary: call.summaryText,
+      nextStep: call.nextStep,
+      recordingUrl: call.recordingUrl
+        ? this.buildRecordingProxyUrl(call.id)
+        : null,
+      messages: call.messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        text: message.text,
+        sequenceNo: message.sequenceNo,
+      })),
     };
   }
 

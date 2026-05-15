@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { env } from "@/common/env.js";
 import {
   telegramClientReportQuerySchema,
@@ -7,11 +7,60 @@ import {
   telegramClientUpdatePromptSchema,
   telegramClientUpdateVoiceSchema,
 } from "@/telegram-client/telegram-client.schemas.js";
-import type { TelegramClientService } from "@/telegram-client/telegram-client.service.js";
+import type {
+  DashboardPeriod,
+  TelegramClientService,
+} from "@/telegram-client/telegram-client.service.js";
+import {
+  extractInitDataFromHeaders,
+  verifyWebAppInitData,
+} from "@/telegram-client/webapp-auth.js";
 
 type TelegramClientRoutesDeps = {
   telegramClientService: TelegramClientService;
 };
+
+function authenticateWebApp(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): { telegramUserId: number } | null {
+  const initData = extractInitDataFromHeaders(
+    request.headers as Record<string, unknown>,
+  );
+  if (!initData) {
+    reply.code(401).send({ error: "INIT_DATA_REQUIRED" });
+    return null;
+  }
+
+  const result = verifyWebAppInitData(initData);
+  if (!result.ok) {
+    reply.code(result.code).send({ error: result.error });
+    return null;
+  }
+
+  return { telegramUserId: result.telegramUserId };
+}
+
+function parsePeriod(value: unknown): DashboardPeriod {
+  if (value === "today" || value === "yesterday" || value === "month" || value === "all") {
+    return value;
+  }
+  return "week";
+}
+
+function parseCategory(
+  value: unknown,
+): "all" | "hot" | "warm" | "cold" | "no_answer" {
+  if (
+    value === "hot" ||
+    value === "warm" ||
+    value === "cold" ||
+    value === "no_answer"
+  ) {
+    return value;
+  }
+  return "all";
+}
 
 function verifyTelegramServiceSecret(
   request: { headers: Record<string, unknown> },
@@ -210,6 +259,94 @@ export async function registerTelegramClientRoutes(
           error instanceof Error
             ? error.message
             : "TELEGRAM_CAMPAIGN_START_FAILED",
+      });
+    }
+  });
+
+  // ─────────────────────────────────────────────
+  // Mini App (WebApp) endpoints — auth via initData HMAC
+  // ─────────────────────────────────────────────
+
+  app.get("/api/telegram/webapp/dashboard", async (request, reply) => {
+    const auth = authenticateWebApp(request, reply);
+    if (!auth) return;
+
+    const query = request.query as { period?: string };
+    const period = parsePeriod(query.period);
+
+    try {
+      const data = await deps.telegramClientService.getDashboard(
+        auth.telegramUserId,
+        period,
+      );
+      return reply.send(data);
+    } catch (error) {
+      return reply.code(404).send({
+        error:
+          error instanceof Error ? error.message : "TELEGRAM_BINDING_NOT_FOUND",
+      });
+    }
+  });
+
+  app.get("/api/telegram/webapp/leads", async (request, reply) => {
+    const auth = authenticateWebApp(request, reply);
+    if (!auth) return;
+
+    const query = request.query as {
+      period?: string;
+      category?: string;
+      limit?: string;
+      offset?: string;
+    };
+
+    const limit = Math.min(
+      Math.max(Number.parseInt(query.limit ?? "50", 10) || 50, 1),
+      200,
+    );
+    const offset = Math.max(Number.parseInt(query.offset ?? "0", 10) || 0, 0);
+
+    try {
+      const data = await deps.telegramClientService.getLeads(
+        auth.telegramUserId,
+        {
+          period: parsePeriod(query.period),
+          category: parseCategory(query.category),
+          limit,
+          offset,
+        },
+      );
+      return reply.send(data);
+    } catch (error) {
+      return reply.code(404).send({
+        error:
+          error instanceof Error ? error.message : "TELEGRAM_BINDING_NOT_FOUND",
+      });
+    }
+  });
+
+  app.get("/api/telegram/webapp/leads/:id", async (request, reply) => {
+    const auth = authenticateWebApp(request, reply);
+    if (!auth) return;
+
+    const params = request.params as { id?: string };
+    const callId = params.id?.trim();
+    if (!callId) {
+      return reply.code(400).send({ error: "CALL_ID_REQUIRED" });
+    }
+
+    try {
+      const data = await deps.telegramClientService.getLeadDetail(
+        auth.telegramUserId,
+        callId,
+      );
+      if (!data) {
+        return reply.code(404).send({ error: "CALL_NOT_FOUND" });
+      }
+      return reply.send(data);
+    } catch (error) {
+      return reply.code(404).send({
+        error:
+          error instanceof Error ? error.message : "TELEGRAM_BINDING_NOT_FOUND",
       });
     }
   });

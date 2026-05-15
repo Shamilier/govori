@@ -31,6 +31,7 @@ type CreateBotDeps = {
   token: string;
   apiClient: ApiClient;
   sessionStore: RedisSessionStore;
+  webAppBaseUrl?: string;
 };
 
 export function createInitialSession(): BotSession {
@@ -55,7 +56,9 @@ export function createBot(deps: CreateBotDeps): Bot<BotContext> {
   registerAuthHandlers(bot, {
     apiClient: deps.apiClient,
   });
-  registerMainMenuHandlers(bot, deps.apiClient);
+  registerMainMenuHandlers(bot, deps.apiClient, {
+    webAppBaseUrl: deps.webAppBaseUrl,
+  });
   registerCampaignHandlers(bot, deps.apiClient);
 
   bot.command("help", async (ctx) => {

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { Agent, MessageRole, Prisma, PrismaClient } from "@prisma/client";
 import type { ConversationService } from "@/calls/conversation.service.js";
+import type { CallClassificationService } from "@/calls/call-classification.service.js";
 import type { IntegrationsService } from "@/integrations/integrations.service.js";
 import type { RedisService } from "@/redis/redis.service.js";
 import type { TtsProvider } from "@/providers/types.js";
@@ -68,6 +69,8 @@ function clampNumber(
 
 const AUDIO_TTL_SEC = 120;
 const AUDIO_KEY_PREFIX = "vox:audio:";
+const ASSISTANT_CONFIG_KEY_PREFIX = "vox:config:";
+const ASSISTANT_CONFIG_TTL_SEC = 30;
 
 export class VoximplantService {
   constructor(
@@ -76,6 +79,7 @@ export class VoximplantService {
     private readonly conversationService: ConversationService,
     private readonly ttsProvider: TtsProvider,
     private readonly redis: RedisService,
+    private readonly classificationService: CallClassificationService,
   ) {}
 
   private async getDefaultTenantId(): Promise<string> {
@@ -219,6 +223,16 @@ export class VoximplantService {
   async getAssistantConfig(
     assistantId: string,
   ): Promise<Record<string, unknown>> {
+    const cacheKey = `${ASSISTANT_CONFIG_KEY_PREFIX}${assistantId}`;
+    const cached = await this.redis.get(cacheKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached) as Record<string, unknown>;
+      } catch {
+        // fall through and rebuild
+      }
+    }
+
     const phoneNumber = await this.resolvePhoneNumber({ assistantId });
     const tenantId = phoneNumber?.tenantId ?? (await this.getDefaultTenantId());
     const agent = await this.resolveAgentForTenant({
@@ -246,7 +260,7 @@ export class VoximplantService {
       0.2,
     );
 
-    return {
+    const config: Record<string, unknown> = {
       assistant_name: agent.name,
       tenant_id: tenantId,
       phone_number: phoneNumber?.e164 ?? null,
@@ -261,22 +275,11 @@ export class VoximplantService {
       elevenlabs: {
         agent_id: integrations.tts.agentId,
         api_key: integrations.tts.apiKey,
-        voice_id:
-          agent.ttsVoiceId ??
-          integrations.tts.voiceId ??
-          env.ELEVENLABS_VOICE_ID ??
-          null,
       },
       tts_endpoint: `${baseUrl}/api/voximplant/synthesize`,
       tts_audio_base_url: `${baseUrl}/api/voximplant/audio`,
       voice_config: {
         provider: integrations.tts.provider,
-        voice_id:
-          agent.ttsVoiceId ??
-          integrations.tts.voiceId ??
-          env.ELEVENLABS_VOICE_ID ??
-          env.GEMINI_TTS_VOICE ??
-          null,
         speed: agent.ttsSpeed ?? 1,
         language: agent.language ?? "ru",
       },
@@ -325,6 +328,14 @@ export class VoximplantService {
         },
       ],
     };
+
+    await this.redis.set(
+      cacheKey,
+      JSON.stringify(config),
+      ASSISTANT_CONFIG_TTL_SEC,
+    );
+
+    return config;
   }
 
   async executeFunction(
@@ -498,5 +509,17 @@ export class VoximplantService {
         outcomeJson: outcome as unknown as Prisma.InputJsonValue,
       },
     });
+
+    // Fire-and-forget classification. Errors are isolated so they
+    // never affect the call ingestion path.
+    void this.classificationService
+      .classifyCall(call.id)
+      .catch((error: unknown) => {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[classification] failed for call ${call.id}: ${message}`,
+        );
+      });
   }
 }

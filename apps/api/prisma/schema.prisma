@@ -33,6 +33,13 @@ enum MessageRole {
   TOOL
 }
 
+enum CallCategory {
+  HOT
+  WARM
+  COLD
+  NO_ANSWER
+}
+
 enum TenantUserRole {
   OWNER
   ADMIN
@@ -276,6 +283,11 @@ model Call {
   outcomeJson          Json?         @map("outcome_json")
   errorMessage         String?       @map("error_message")
   systemPromptSnapshot String?       @map("system_prompt_snapshot")
+  category             CallCategory? @map("category")
+  summaryText          String?       @map("summary_text")
+  nextStep             String?       @map("next_step")
+  leadName             String?       @map("lead_name")
+  classifiedAt         DateTime?     @map("classified_at")
   createdAt            DateTime      @default(now()) @map("created_at")
   updatedAt            DateTime      @updatedAt @map("updated_at")
 
@@ -290,6 +302,8 @@ model Call {
   @@index([startedAt])
   @@index([tenantId, startedAt])
   @@index([phoneNumberId])
+  @@index([category])
+  @@index([tenantId, category, startedAt])
   @@map("calls")
 }
 

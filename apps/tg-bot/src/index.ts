@@ -21,6 +21,7 @@ const envSchema = z.object({
   WEBHOOK_PATH: z.string().default("/telegram/webhook"),
   WEBHOOK_BASE_URL: z.string().url().optional(),
   WEB_ORIGIN: z.string().url().optional(),
+  WEBAPP_BASE_URL: z.string().url().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
 });
 
@@ -57,6 +58,7 @@ async function start(): Promise<void> {
     token: env.BOT_TOKEN,
     apiClient,
     sessionStore,
+    webAppBaseUrl: env.WEBAPP_BASE_URL ?? env.WEB_ORIGIN,
   });
 
   await registerWebhook(

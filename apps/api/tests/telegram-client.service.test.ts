@@ -62,6 +62,7 @@ describe("TelegramClientService", () => {
       prisma as never,
       {} as never,
       {} as never,
+      {} as never,
     );
 
     const result = await service.getState(1297355532);
@@ -149,6 +150,7 @@ describe("TelegramClientService", () => {
 
     const service = new TelegramClientService(
       prisma as never,
+      {} as never,
       {} as never,
       {} as never,
     );

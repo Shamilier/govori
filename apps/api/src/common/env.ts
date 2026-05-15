@@ -36,6 +36,8 @@ const envSchema = z.object({
     .default(15),
   TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
   TELEGRAM_BOT_SERVICE_SECRET: z.string().optional(),
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  WEBAPP_BASE_URL: z.string().url().optional(),
   JWT_SECRET: z.string().min(16),
   ENCRYPTION_KEY: z.string().min(16),
   ADMIN_EMAIL: z.string().email().default("admin@example.com"),
